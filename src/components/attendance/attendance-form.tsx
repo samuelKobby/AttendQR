@@ -14,6 +14,7 @@ const attendanceSchema = z.object({
   studentId: z.string().min(1, 'Student ID is required'),
   studentName: z.string().min(1, 'Student name is required'),
   signature: z.string().min(1, 'Signature is required'),
+  schoolStudentId: z.string().min(1, 'School Student ID is required')
 });
 
 type AttendanceFormData = z.infer<typeof attendanceSchema>;
@@ -42,6 +43,7 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
       studentId: authState.user?.id || '',
       studentName: authState.user?.name || '',
       signature: '',
+      schoolStudentId: ''
     },
   });
 
@@ -103,6 +105,8 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
         .insert({
           session_id: sessionId,
           student_id: data.studentId,
+          student_name: data.studentName,
+          school_student_id: data.schoolStudentId,
           signature: data.signature,
           marked_at: new Date().toISOString(),
         });
@@ -192,6 +196,27 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
           {errors.studentName && (
             <p className="mt-1 text-sm text-red-600">
               {errors.studentName.message}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label
+            htmlFor="schoolStudentId"
+            className="block text-sm font-medium text-gray-700 mb-1"
+          >
+            School Student ID
+          </label>
+          <Input
+            id="schoolStudentId"
+            {...register('schoolStudentId')}
+            type="text"
+            className="w-full"
+            placeholder="Enter your school student ID"
+          />
+          {errors.schoolStudentId && (
+            <p className="mt-1 text-sm text-red-600">
+              {errors.schoolStudentId.message}
             </p>
           )}
         </div>

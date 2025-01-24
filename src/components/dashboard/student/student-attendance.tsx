@@ -1,18 +1,87 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { QrCode, Calendar } from 'lucide-react';
+import { Calendar, QrCode, X } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/auth-context';
+import { format, parseISO, isToday } from 'date-fns';
 import { QRScanner } from '@/components/attendance/qr-scanner';
+import { AttendanceForm } from '@/components/attendance/attendance-form';
+
+interface ClassSession {
+  id: string;
+  start_time: string;
+  end_time: string;
+  class: {
+    name: string;
+    course_code: string;
+  };
+  attendance_records: {
+    id: string;
+    student_id: string;
+  }[];
+}
 
 export function StudentAttendance() {
+  const [todaySessions, setTodaySessions] = useState<ClassSession[]>([]);
   const [showScanner, setShowScanner] = useState(false);
+  const [showAttendanceForm, setShowAttendanceForm] = useState(false);
   const [scannedData, setScannedData] = useState<{
     sessionId: string;
     token: string;
   } | null>(null);
+  const { authState } = useAuth();
+
+  useEffect(() => {
+    fetchTodaySessions();
+  }, [authState.user?.id]);
+
+  const fetchTodaySessions = async () => {
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const { data: sessions, error } = await supabase
+        .from('class_sessions')
+        .select(`
+          id,
+          start_time,
+          end_time,
+          class:classes (
+            name,
+            course_code
+          ),
+          attendance_records (
+            id,
+            student_id
+          )
+        `)
+        .gte('start_time', today.toISOString())
+        .lt('start_time', tomorrow.toISOString())
+        .order('start_time');
+
+      if (error) throw error;
+
+      setTodaySessions(sessions || []);
+    } catch (error) {
+      console.error('Error fetching today\'s sessions:', error);
+    }
+  };
 
   const handleScan = (data: { sessionId: string; token: string }) => {
     setScannedData(data);
     setShowScanner(false);
+    setShowAttendanceForm(true);
+  };
+
+  const handleMark = (sessionId: string) => {
+    // Show QR scanner for the specific session
+    setShowScanner(true);
+  };
+
+  const hasMarkedAttendance = (session: ClassSession) => {
+    return session.attendance_records.some(record => record.student_id === authState.user?.id);
   };
 
   return (
@@ -46,42 +115,66 @@ export function StudentAttendance() {
         <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
           <h2 className="text-base sm:text-lg font-semibold mb-4">Today's Schedule</h2>
           <div className="space-y-3">
-            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-              <div className="flex items-center space-x-3">
-                <Calendar className="h-5 w-5 text-gray-400" />
-                <div>
-                  <p className="font-medium text-sm sm:text-base">Database Systems</p>
-                  <p className="text-xs sm:text-sm text-gray-500">09:00 AM - 11:00 AM</p>
+            {todaySessions.length > 0 ? (
+              todaySessions.map((session) => (
+                <div
+                  key={session.id}
+                  className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                >
+                  <div className="flex items-center space-x-3">
+                    <Calendar className="h-5 w-5 text-gray-400" />
+                    <div>
+                      <p className="font-medium text-sm sm:text-base">
+                        {session.class.name}
+                      </p>
+                      <p className="text-xs sm:text-sm text-gray-500">
+                        {format(parseISO(session.start_time), 'hh:mm a')} - {format(parseISO(session.end_time), 'hh:mm a')}
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    className="text-xs sm:text-sm"
+                    onClick={() => handleMark(session.id)}
+                    disabled={hasMarkedAttendance(session)}
+                  >
+                    {hasMarkedAttendance(session) ? 'Marked' : 'Mark'}
+                  </Button>
                 </div>
-              </div>
-              <Button size="sm" className="text-xs sm:text-sm">Mark</Button>
-            </div>
-            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-              <div className="flex items-center space-x-3">
-                <Calendar className="h-5 w-5 text-gray-400" />
-                <div>
-                  <p className="font-medium text-sm sm:text-base">Web Development</p>
-                  <p className="text-xs sm:text-sm text-gray-500">02:00 PM - 04:00 PM</p>
-                </div>
-              </div>
-              <Button size="sm" className="text-xs sm:text-sm">Mark</Button>
-            </div>
+              ))
+            ) : (
+              <p className="text-center text-gray-500 py-4">No classes scheduled for today</p>
+            )}
           </div>
         </div>
       </div>
 
       {showScanner && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-4 sm:p-6 w-full max-w-md">
-            <h2 className="text-lg font-semibold mb-4">Scan QR Code</h2>
-            <QRScanner onScan={handleScan} />
-            <Button
-              onClick={() => setShowScanner(false)}
-              className="w-full mt-4"
-              variant="outline"
-            >
-              Cancel
-            </Button>
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold">Scan QR Code</h2>
+              <Button variant="ghost" size="sm" onClick={() => setShowScanner(false)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <QRScanner onScan={handleScan} onClose={() => setShowScanner(false)} />
+          </div>
+        </div>
+      )}
+
+      {showAttendanceForm && scannedData && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <AttendanceForm
+              sessionId={scannedData.sessionId}
+              token={scannedData.token}
+              onClose={() => {
+                setShowAttendanceForm(false);
+                setScannedData(null);
+                fetchTodaySessions(); // Refresh the list after marking attendance
+              }}
+            />
           </div>
         </div>
       )}

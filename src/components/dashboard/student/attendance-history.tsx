@@ -7,30 +7,38 @@ import {
   Download,
   Filter,
   Calendar,
+  X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth-context';
 import { format, parseISO } from 'date-fns';
+import { Input } from '@/components/ui/input';
 
 interface AttendanceRecord {
   id: string;
   date: string;
   class_name: string;
+  course_code: string;
   status: 'present' | 'late' | 'absent';
   marked_at?: string;
 }
 
 export function AttendanceHistory() {
+  const [showDateFilter, setShowDateFilter] = useState(false);
+  const [dateFilter, setDateFilter] = useState({
+    startDate: '',
+    endDate: '',
+  });
   const [attendanceHistory, setAttendanceHistory] = useState<AttendanceRecord[]>([]);
   const { authState } = useAuth();
 
   useEffect(() => {
     fetchAttendanceHistory();
-  }, []);
+  }, [authState.user?.id]);
 
   const fetchAttendanceHistory = async () => {
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('attendance_records')
         .select(`
           id,
@@ -38,37 +46,92 @@ export function AttendanceHistory() {
           class_sessions!inner (
             start_time,
             classes (
-              name
+              name,
+              course_code
             )
           )
         `)
         .eq('student_id', authState.user?.id)
         .order('marked_at', { ascending: false });
 
-      if (data) {
-        setAttendanceHistory(
-          data.map((record) => {
-            const sessionStart = new Date(record.class_sessions.start_time);
-            const markedTime = record.marked_at ? new Date(record.marked_at) : null;
-            let status: 'present' | 'late' | 'absent' = 'absent';
+      if (error) throw error;
 
-            if (markedTime) {
-              const timeDiff = markedTime.getTime() - sessionStart.getTime();
-              status = timeDiff <= 15 * 60 * 1000 ? 'present' : 'late';
-            }
+      const history = data?.map((record) => ({
+        id: record.id,
+        date: record.class_sessions.start_time,
+        class_name: record.class_sessions.classes.name,
+        course_code: record.class_sessions.classes.course_code,
+        marked_at: record.marked_at,
+        status:
+          new Date(record.marked_at).getTime() -
+            new Date(record.class_sessions.start_time).getTime() <=
+          15 * 60 * 1000
+            ? 'present'
+            : 'late',
+      })) || [];
 
-            return {
-              id: record.id,
-              date: record.class_sessions.start_time,
-              class_name: record.class_sessions.classes.name,
-              status,
-              marked_at: record.marked_at,
-            };
-          })
-        );
-      }
+      setAttendanceHistory(history);
     } catch (error) {
       console.error('Error fetching attendance history:', error);
+    }
+  };
+
+  const filteredHistory = attendanceHistory.filter((record) => {
+    if (!dateFilter.startDate && !dateFilter.endDate) return true;
+
+    const recordDate = new Date(record.date);
+    const startDate = dateFilter.startDate
+      ? new Date(dateFilter.startDate)
+      : null;
+    const endDate = dateFilter.endDate
+      ? new Date(dateFilter.endDate)
+      : null;
+
+    if (startDate && endDate) {
+      return recordDate >= startDate && recordDate <= endDate;
+    } else if (startDate) {
+      return recordDate >= startDate;
+    } else if (endDate) {
+      return recordDate <= endDate;
+    }
+
+    return true;
+  });
+
+  const downloadHistory = () => {
+    try {
+      // Create CSV content
+      const headers = ['Date', 'Class', 'Course Code', 'Time', 'Status'];
+      const rows = filteredHistory.map((record) => [
+        format(new Date(record.date), 'MM/dd/yyyy'),
+        record.class_name,
+        record.course_code,
+        format(new Date(record.marked_at), 'hh:mm a'),
+        record.status.charAt(0).toUpperCase() + record.status.slice(1),
+      ]);
+
+      const csvContent = [
+        headers.join(','),
+        ...rows.map((row) => row.map((cell) => `"${cell}"`).join(',')),
+      ].join('\n');
+
+      // Download file
+      const blob = new Blob([csvContent], {
+        type: 'text/csv;charset=utf-8',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute(
+        'download',
+        `attendance_history_${format(new Date(), 'dd-MM-yyyy')}.csv`
+      );
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading history:', error);
     }
   };
 
@@ -80,11 +143,21 @@ export function AttendanceHistory() {
           <p className="text-sm text-gray-500">View your attendance records</p>
         </div>
         <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
-          <Button variant="outline" size="sm" className="text-xs sm:text-sm">
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs sm:text-sm"
+            onClick={() => setShowDateFilter(true)}
+          >
             <Calendar className="h-3 w-3 sm:h-4 sm:w-4 mr-1.5" />
             Filter by Date
           </Button>
-          <Button variant="outline" size="sm" className="px-2 sm:px-3">
+          <Button
+            variant="outline"
+            size="sm"
+            className="px-2 sm:px-3"
+            onClick={downloadHistory}
+          >
             <Download className="h-3 w-3 sm:h-4 sm:w-4" />
           </Button>
         </div>
@@ -92,7 +165,7 @@ export function AttendanceHistory() {
 
       <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
         <div className="space-y-4">
-          {attendanceHistory.map((record) => (
+          {filteredHistory.map((record) => (
             <div
               key={record.id}
               className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3 bg-gray-50 rounded-lg gap-2"
@@ -129,6 +202,60 @@ export function AttendanceHistory() {
           ))}
         </div>
       </div>
+      {showDateFilter && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold">Filter by Date</h2>
+              <Button variant="ghost" size="sm" onClick={() => setShowDateFilter(false)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Start Date
+                </label>
+                <Input
+                  type="date"
+                  value={dateFilter.startDate}
+                  onChange={(e) =>
+                    setDateFilter((prev) => ({ ...prev, startDate: e.target.value }))
+                  }
+                  className="w-full"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  End Date
+                </label>
+                <Input
+                  type="date"
+                  value={dateFilter.endDate}
+                  onChange={(e) =>
+                    setDateFilter((prev) => ({ ...prev, endDate: e.target.value }))
+                  }
+                  className="w-full"
+                />
+              </div>
+              <div className="flex justify-end space-x-2 pt-4">
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    setDateFilter({
+                      startDate: '',
+                      endDate: '',
+                    })
+                  }
+                >
+                  Reset
+                </Button>
+                <Button onClick={() => setShowDateFilter(false)}>Apply</Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
