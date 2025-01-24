@@ -43,15 +43,15 @@ function AppContent() {
       <div className="flex h-screen bg-gray-100">
         <Sidebar role="admin" />
         <main className="flex-1 overflow-y-auto p-8">
-          <Routes>
-            <Route path="/admin" element={<AdminDashboard />} />
-            <Route path="/admin/lecturers" element={<ManageLecturers />} />
-            <Route path="/admin/students" element={<ManageStudents />} />
-            <Route path="/admin/reports" element={<Reports />} />
-            <Route path="/admin/settings" element={<Settings />} />
-            <Route path="/admin/notifications" element={<Notifications />} />
-            <Route path="*" element={<Navigate to="/admin" />} />
-          </Routes>
+            <Routes>
+              <Route path="/admin" element={<AdminDashboard />} />
+              <Route path="/admin/lecturers" element={<ManageLecturers />} />
+              <Route path="/admin/students" element={<ManageStudents />} />
+              <Route path="/admin/reports" element={<Reports />} />
+              <Route path="/admin/settings" element={<Settings />} />
+              <Route path="/admin/notifications" element={<Notifications />} />
+              <Route path="*" element={<Navigate to="/admin" />} />
+            </Routes>
         </main>
       </div>
     );
@@ -62,14 +62,14 @@ function AppContent() {
       <div className="flex h-screen bg-gray-100">
         <Sidebar role="lecturer" />
         <main className="flex-1 overflow-y-auto p-8">
-          <Routes>
-            <Route path="/lecturer" element={<LecturerDashboard />} />
-            <Route path="/lecturer/classes" element={<MyClasses />} />
-            <Route path="/lecturer/attendance" element={<TakeAttendance />} />
-            <Route path="/lecturer/reports" element={<LecturerReports />} />
-            <Route path="/" element={<Navigate to="/lecturer" />} />
-            <Route path="*" element={<Navigate to="/lecturer" />} />
-          </Routes>
+            <Routes>
+              <Route path="/lecturer" element={<LecturerDashboard />} />
+              <Route path="/lecturer/classes" element={<MyClasses />} />
+              <Route path="/lecturer/attendance" element={<TakeAttendance />} />
+              <Route path="/lecturer/reports" element={<LecturerReports />} />
+              <Route path="/" element={<Navigate to="/lecturer" />} />
+              <Route path="*" element={<Navigate to="/lecturer" />} />
+            </Routes>
         </main>
       </div>
     );

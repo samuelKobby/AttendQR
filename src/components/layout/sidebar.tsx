@@ -143,15 +143,7 @@ export function Sidebar({ role }: SidebarProps) {
         </div>
       </aside>
 
-      {/* Main Content Wrapper */}
-      <div
-        className={cn(
-          "min-h-screen bg-gray-50 transition-all duration-300",
-          isOpen ? "lg:ml-64 ml-0 pt-16 sm:pt-6 px-4 sm:px-6" : "ml-0 pt-16 sm:pt-6 px-4 sm:px-6"
-        )}
-      >
-        {/* Rest of the main content */}
-      </div>
+      
     </>
   );
 }
