@@ -63,6 +63,7 @@ export function StudentDashboard() {
     sessionId: string;
     token: string;
   } | null>(null);
+  const [showAttendanceForm, setShowAttendanceForm] = useState(false);
   const [attendanceHistory, setAttendanceHistory] = useState<AttendanceRecord[]>([]);
   const [classes, setClasses] = useState<Class[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -290,6 +291,7 @@ export function StudentDashboard() {
   const handleScan = (data: { sessionId: string; token: string }) => {
     setScannedData(data);
     setShowScanner(false);
+    setShowAttendanceForm(true);
   };
 
   const handleDownloadCertificate = async (classId: string) => {
@@ -614,14 +616,23 @@ export function StudentDashboard() {
       </div>
 
       {showScanner && (
-        <QRScanner
-          onScan={handleScan}
-          onClose={() => setShowScanner(false)}
-        />
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <QRScanner onScan={handleScan} onClose={() => setShowScanner(false)} />
+          </div>
+        </div>
       )}
 
-      {scannedData && (
-        <AttendanceForm />
+      {showAttendanceForm && scannedData && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <AttendanceForm 
+              sessionId={scannedData.sessionId} 
+              token={scannedData.token} 
+              onClose={() => setShowAttendanceForm(false)}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

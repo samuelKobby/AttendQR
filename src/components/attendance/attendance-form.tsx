@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useAuth } from '@/contexts/auth-context';
 import { supabase } from '@/lib/supabase';
-import { AlertCircle, Loader2, UserCheck } from 'lucide-react';
+import { AlertCircle, Loader2, UserCheck, X } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -18,10 +18,13 @@ const attendanceSchema = z.object({
 
 type AttendanceFormData = z.infer<typeof attendanceSchema>;
 
-export function AttendanceForm() {
-  const [searchParams] = useSearchParams();
-  const sessionId = searchParams.get('session');
-  const token = searchParams.get('token');
+interface AttendanceFormProps {
+  sessionId: string;
+  token: string;
+  onClose: () => void;
+}
+
+export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -110,6 +113,7 @@ export function AttendanceForm() {
 
       setSuccess(true);
       setTimeout(() => {
+        onClose();
         navigate('/student/history', {
           state: {
             success: `Attendance marked successfully for ${session.classes.name}`,
@@ -142,8 +146,13 @@ export function AttendanceForm() {
   }
 
   return (
-    <div className="max-w-md mx-auto p-6 bg-white rounded-lg shadow-md">
-      <h2 className="text-2xl font-bold mb-6">Mark Attendance</h2>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold">Mark Attendance</h2>
+        <Button variant="ghost" size="sm" onClick={onClose}>
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
         <div>
           <label
