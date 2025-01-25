@@ -20,60 +20,33 @@ export function StudentNotifications() {
 
   useEffect(() => {
     fetchNotifications();
-  }, [authState.user?.id]);
+  }, []);
 
   const fetchNotifications = async () => {
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('notifications')
         .select('*')
-        .eq('student_id', authState.user?.id)
-        .order('created_at', { ascending: false });
+        .eq('user_id', authState.user?.id)
+        .order('timestamp', { ascending: false });
 
-      if (error) throw error;
-      setNotifications(data || []);
+      if (data) {
+        setNotifications(data);
+      }
     } catch (error) {
       console.error('Error fetching notifications:', error);
     }
   };
 
-  const markAllAsRead = async () => {
-    try {
-      const unreadNotifications = notifications.filter(n => !n.read);
-      if (unreadNotifications.length === 0) return;
-
-      const { error } = await supabase
-        .from('notifications')
-        .update({ read: true })
-        .eq('student_id', authState.user?.id)
-        .in('id', unreadNotifications.map(n => n.id));
-
-      if (error) throw error;
-
-      // Update local state
-      setNotifications(prev => 
-        prev.map(notification => ({
-          ...notification,
-          read: true
-        }))
-      );
-    } catch (error) {
-      console.error('Error marking notifications as read:', error);
-    }
-  };
-
   const markAsRead = async (notificationId: string) => {
     try {
-      const { error } = await supabase
+      await supabase
         .from('notifications')
         .update({ read: true })
         .eq('id', notificationId);
 
-      if (error) throw error;
-
-      // Update local state
-      setNotifications(prev =>
-        prev.map(notification =>
+      setNotifications((prev) =>
+        prev.map((notification) =>
           notification.id === notificationId
             ? { ...notification, read: true }
             : notification
@@ -92,13 +65,7 @@ export function StudentNotifications() {
           <p className="text-sm text-gray-500">Stay updated with your attendance and classes</p>
         </div>
         <div className="relative">
-          <Button 
-            variant="outline" 
-            size="sm" 
-            className="text-xs sm:text-sm"
-            onClick={markAllAsRead}
-            disabled={!notifications.some(n => !n.read)}
-          >
+          <Button variant="outline" size="sm" className="text-xs sm:text-sm">
             <Bell className="h-4 w-4 mr-2" />
             Mark all as read
           </Button>

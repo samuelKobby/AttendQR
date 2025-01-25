@@ -21,6 +21,7 @@ import { ErrorBoundary } from './components/error-boundary';
 import { StudentAttendance } from './components/dashboard/student/student-attendance';
 import { AttendanceHistory } from './components/dashboard/student/attendance-history';
 import { StudentNotifications } from './components/dashboard/student/student-notifications';
+import { Toaster } from './components/ui/toaster';
 
 function AppContent() {
   const { authState } = useAuth();
@@ -97,6 +98,7 @@ function App() {
   return (
     <ErrorBoundary>
       <AppContent />
+      <Toaster />
     </ErrorBoundary>
   );
 }

@@ -200,7 +200,7 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
           )}
         </div>
 
-        <div>
+        {/* <div>
           <label
             htmlFor="schoolStudentId"
             className="block text-sm font-medium text-gray-700 mb-1"
@@ -219,7 +219,7 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
               {errors.schoolStudentId.message}
             </p>
           )}
-        </div>
+        </div> */}
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">

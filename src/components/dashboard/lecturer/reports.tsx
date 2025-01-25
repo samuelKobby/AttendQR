@@ -29,6 +29,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth-context';
 import { format, subMonths, startOfMonth, endOfMonth } from 'date-fns';
+import { useToast } from '@/components/ui/use-toast';
 
 interface AttendanceData {
   month: string;
@@ -47,6 +48,21 @@ interface PieData {
   color: string;
 }
 
+interface AttendanceReport {
+  id: string;
+  student_id: string;
+  student_name: string;
+  school_student_id: string;
+  marked_at: string;
+  class_session: {
+    start_time: string;
+    class: {
+      name: string;
+      course_code: string;
+    };
+  };
+}
+
 export function Reports() {
   const [selectedPeriod, setSelectedPeriod] = useState('This Month');
   const [selectedClass, setSelectedClass] = useState('All Classes');
@@ -61,7 +77,9 @@ export function Reports() {
   });
   const [classes, setClasses] = useState<Class[]>([]);
   const [dateRange, setDateRange] = useState<[Date | null, Date | null]>([null, null]);
+  const [reports, setReports] = useState<AttendanceReport[]>([]);
   const { authState } = useAuth();
+  const { toast } = useToast();
 
   useEffect(() => {
     fetchStats();
@@ -69,6 +87,7 @@ export function Reports() {
     fetchClassData();
     fetchAttendanceDistribution();
     fetchClasses();
+    fetchReports();
   }, [authState.user?.id, selectedPeriod]);
 
   const fetchStats = async () => {
@@ -273,68 +292,93 @@ export function Reports() {
     }
   };
 
-  const handleExport = async () => {
+  const fetchReports = async () => {
     try {
-      const { data: sessions } = await supabase
-        .from('class_sessions')
+      const { data, error } = await supabase
+        .from('attendance_records')
         .select(`
           id,
-          start_time,
-          classes (
-            name,
-            course_code
-          ),
-          attendance_records (
-            student_id,
-            marked_at,
-            profiles!inner (
-              full_name,
-              student_id
+          student_id,
+          student_name,
+          school_student_id,
+          marked_at,
+          class_session:class_sessions!inner (
+            start_time,
+            class:classes (
+              name,
+              course_code
             )
           )
         `)
-        .eq('lecturer_id', authState.user?.id)
-        .order('start_time', { ascending: false });
+        .order('marked_at', { ascending: false });
 
-      if (!sessions) return;
+      if (error) throw error;
+      setReports(data || []);
+    } catch (error) {
+      console.error('Error fetching reports:', error);
+    }
+  };
 
-      const csvData = sessions.flatMap(session =>
-        session.attendance_records.map(record => ({
-          class: session.classes.name,
-          course_code: session.classes.course_code,
-          date: format(new Date(session.start_time), 'yyyy-MM-dd'),
-          time: format(new Date(session.start_time), 'HH:mm:ss'),
-          student_name: record.profiles.full_name,
-          student_id: record.profiles.student_id,
-          marked_at: format(new Date(record.marked_at), 'HH:mm:ss'),
-        }))
-      );
+  const exportReport = () => {
+    try {
+      // Create CSV headers
+      const headers = [
+        'Date',
+        'Time',
+        'Class',
+        'Course Code',
+        'Student Name',
+        'School ID',
+        'Status'
+      ];
 
-      const headers = ['Class', 'Course Code', 'Date', 'Time', 'Student Name', 'Student ID', 'Marked At'];
+      // Create CSV rows
+      const rows = reports.map(report => {
+        const sessionDate = new Date(report.class_session.start_time);
+        const markedTime = new Date(report.marked_at);
+        const timeDiff = markedTime.getTime() - sessionDate.getTime();
+        const status = timeDiff <= 15 * 60 * 1000 ? 'Present' : 'Late';
+
+        return [
+          format(sessionDate, 'MM/dd/yyyy'),
+          format(markedTime, 'hh:mm a'),
+          report.class_session.class.name,
+          report.class_session.class.course_code,
+          report.student_name,
+          report.school_student_id,
+          status
+        ];
+      });
+
+      // Combine headers and rows
       const csvContent = [
         headers.join(','),
-        ...csvData.map(row => [
-          row.class,
-          row.course_code,
-          row.date,
-          row.time,
-          row.student_name,
-          row.student_id,
-          row.marked_at,
-        ].join(','))
+        ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
       ].join('\n');
 
-      const blob = new Blob([csvContent], { type: 'text/csv' });
+      // Create and download file
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `attendance_report_${format(new Date(), 'yyyy-MM-dd')}.csv`;
-      document.body.appendChild(a);
-      a.click();
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `attendance_report_${format(new Date(), 'MM-dd-yyyy')}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+
+      toast({
+        variant: "success",
+        title: "Report Exported Successfully",
+        description: "The attendance report has been downloaded as a CSV file",
+      });
     } catch (error) {
-      console.error('Error exporting data:', error);
+      console.error('Error exporting report:', error);
+      toast({
+        variant: "destructive",
+        title: "Export Failed",
+        description: "There was an error exporting the attendance report",
+      });
     }
   };
 
@@ -346,7 +390,11 @@ export function Reports() {
           <h1 className="text-xl sm:text-2xl font-bold">Reports & Analytics</h1>
           <p className="text-sm text-gray-500">View detailed attendance reports and analytics</p>
         </div>
-        <Button variant="outline" className="w-full sm:w-auto">
+        <Button 
+          variant="outline" 
+          className="w-full sm:w-auto"
+          onClick={exportReport}
+        >
           <Download className="h-4 w-4 mr-2" />
           Export Report
         </Button>
