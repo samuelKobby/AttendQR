@@ -136,12 +136,13 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
                   Scan to Mark Attendance
                 </h3>
                 <div className="flex justify-center">
-                  <div className="bg-white p-4 rounded-lg shadow-md">
+                  <div className="bg-white p-6 rounded-lg shadow-md">
                     <QRCode
                       value={getAttendanceUrl()}
-                      size={200}
+                      size={300}
                       level="H"
                       includeMargin
+                      className="w-full h-full"
                     />
                   </div>
                 </div>

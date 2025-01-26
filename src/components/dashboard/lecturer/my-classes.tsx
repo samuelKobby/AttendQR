@@ -22,19 +22,11 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth-context';
 import { format } from 'date-fns';
 import { CreateClassForm } from './create-class-form';
+import { EditClassForm } from './edit-class-form';
+import { AttendanceQRModal } from './attendance-qr-modal';
 import { databaseService } from '@/services/database';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { toast } from 'sonner';
+import Swal from 'sweetalert2';
 
 interface Class {
   id: string;
@@ -49,6 +41,9 @@ interface Class {
 
 export function MyClasses() {
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showEditForm, setShowEditForm] = useState(false);
+  const [showQRModal, setShowQRModal] = useState(false);
+  const [selectedClass, setSelectedClass] = useState<Class | null>(null);
   const [classes, setClasses] = useState<Class[]>([]);
   const [loading, setLoading] = useState(false);
   const { authState } = useAuth();
@@ -59,37 +54,130 @@ export function MyClasses() {
 
   const fetchClasses = async () => {
     try {
-      setLoading(true);
+      console.log('Fetching classes...');
       const { data, error } = await supabase
         .from('classes')
         .select('*')
         .eq('lecturer_id', authState.user?.id)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error in fetchClasses:', error);
+        throw error;
+      }
       
-      // Update the state with the new data
+      console.log('Fetched classes:', data);
       setClasses(data || []);
     } catch (error) {
       console.error('Error fetching classes:', error);
-      toast.error('Failed to fetch classes');
-    } finally {
-      setLoading(false);
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: 'Failed to fetch classes',
+        confirmButtonColor: '#3085d6',
+      });
     }
   };
 
-  const handleDeleteClass = async (classId: string) => {
+  const handleDeleteClass = async (classId: string, className: string) => {
     try {
-      setLoading(true);
-      await databaseService.deleteClass(classId);
-      toast.success('Class deleted successfully');
-      fetchClasses(); // Refresh the list
+      // First verify that the user has permission to delete this class
+      const { data: classData, error: classError } = await supabase
+        .from('classes')
+        .select('*')
+        .eq('id', classId)
+        .single();
+
+      if (classError || !classData) {
+        throw new Error('Unable to verify class ownership');
+      }
+
+      const result = await Swal.fire({
+        title: 'Delete Class',
+        text: `Are you sure you want to delete "${className}"? This action cannot be undone. All associated attendance records and sessions will also be deleted.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Yes, delete it!',
+        showLoaderOnConfirm: true,
+        preConfirm: async () => {
+          try {
+            setLoading(true);
+            await databaseService.deleteClass(classId);
+            return true;
+          } catch (error) {
+            console.error('Error in handleDeleteClass:', error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+            Swal.showValidationMessage(`Delete failed: ${errorMessage}`);
+            return false;
+          } finally {
+            setLoading(false);
+          }
+        },
+        allowOutsideClick: () => !loading
+      });
+
+      if (result.isConfirmed) {
+        // Optimistically update UI
+        setClasses(prevClasses => prevClasses.filter(c => c.id !== classId));
+        
+        // Verify deletion with retries
+        let retryCount = 0;
+        const maxRetries = 3;
+        
+        while (retryCount < maxRetries) {
+          const { data } = await supabase
+            .from('classes')
+            .select('id')
+            .eq('id', classId)
+            .maybeSingle();
+          
+          if (!data) {
+            // Successfully deleted
+            Swal.fire({
+              title: 'Deleted!',
+              text: 'The class has been deleted successfully.',
+              icon: 'success',
+              confirmButtonColor: '#3085d6',
+            });
+            return;
+          }
+          
+          // Wait before retrying
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          retryCount++;
+        }
+        
+        // If we get here, verification failed
+        console.error('Verification failed after retries: Class still exists');
+        await fetchClasses();
+        throw new Error('Unable to verify class deletion - please try again');
+      }
     } catch (error) {
-      console.error('Error deleting class:', error);
-      toast.error('Failed to delete class');
-    } finally {
-      setLoading(false);
+      console.error('Error in delete process:', error);
+      
+      // Show error message and refresh the list
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: error instanceof Error 
+          ? error.message 
+          : 'Failed to delete class. Please try again or contact support.',
+        confirmButtonColor: '#3085d6',
+      });
+      
+      await fetchClasses();
     }
+  };
+
+  const handleEditClick = (classData: Class) => {
+    setSelectedClass(classData);
+    setShowEditForm(true);
+  };
+
+  const handleEditSuccess = () => {
+    fetchClasses();
   };
 
   return (
@@ -127,43 +215,19 @@ export function MyClasses() {
                     variant="ghost"
                     size="sm"
                     className="h-8 w-8 p-0"
-                    onClick={() => {/* TODO: Add edit functionality */}}
+                    onClick={() => handleEditClick(cls)}
                   >
                     <Edit className="h-4 w-4" />
                   </Button>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-red-500 hover:text-red-600 hover:bg-red-50"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Delete Class</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Are you sure you want to delete "{cls.name}"? This action cannot be undone.
-                          All associated attendance records and sessions will also be deleted.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction
-                          onClick={async (e) => {
-                            e.preventDefault();
-                            await handleDeleteClass(cls.id);
-                          }}
-                          className="bg-red-500 hover:bg-red-600"
-                          disabled={loading}
-                        >
-                          {loading ? 'Deleting...' : 'Delete'}
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0 text-red-500 hover:text-red-600 hover:bg-red-50"
+                    onClick={() => handleDeleteClass(cls.id, cls.name)}
+                    disabled={loading}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
                 </div>
               </div>
 
@@ -191,33 +255,56 @@ export function MyClasses() {
                   variant="outline"
                   size="sm"
                   className="flex-1"
-                  onClick={() => {/* TODO: Add take attendance functionality */}}
+                  onClick={() => {
+                    setSelectedClass(cls);
+                    setShowQRModal(true);
+                  }}
                 >
                   <QrCode className="h-4 w-4 mr-2" />
                   Take Attendance
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1"
-                  onClick={() => {/* TODO: Add view history functionality */}}
-                >
-                  <History className="h-4 w-4 mr-2" />
-                  View History
-                </Button>
+                
               </div>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Create Class Modal */}
       {showCreateForm && (
         <CreateClassForm
           onClose={() => setShowCreateForm(false)}
           onSuccess={() => {
             setShowCreateForm(false);
             fetchClasses();
+          }}
+        />
+      )}
+
+      {/* Edit Class Dialog */}
+      {showEditForm && selectedClass && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-2xl rounded-lg bg-white p-6">
+            <h2 className="mb-4 text-lg font-semibold">Edit Class</h2>
+            <EditClassForm
+              classData={selectedClass}
+              onClose={() => {
+                setShowEditForm(false);
+                setSelectedClass(null);
+              }}
+              onSuccess={handleEditSuccess}
+            />
+          </div>
+        </div>
+      )}
+
+      {showQRModal && selectedClass && (
+        <AttendanceQRModal
+          classId={selectedClass.id}
+          className={selectedClass.name}
+          isOpen={showQRModal}
+          onClose={() => {
+            setShowQRModal(false);
+            setSelectedClass(null);
           }}
         />
       )}

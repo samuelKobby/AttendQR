@@ -154,54 +154,163 @@ export const databaseService = {
   },
 
   async deleteClass(classId: string) {
-    // Start a transaction to ensure all related data is deleted
-    const { data: sessions, error: sessionsError } = await supabase
-      .from('class_sessions')
-      .select('id')
-      .eq('class_id', classId);
+    console.log('Starting class deletion process for classId:', classId);
 
-    if (sessionsError) throw sessionsError;
+    try {
+      // Get the current user first
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+      console.log('Current user:', user.id);
 
-    // Delete in this order to maintain referential integrity:
-    // 1. Delete attendance records for all sessions
-    if (sessions && sessions.length > 0) {
-      const sessionIds = sessions.map(session => session.id);
-      const { error: attendanceError } = await supabase
-        .from('attendance_records')
+      // Verify ownership and get class details with explicit role check
+      const { data: classData, error: classCheckError } = await supabase
+        .from('classes')
+        .select('*, profiles!classes_lecturer_id_fkey(role)')
+        .eq('id', classId)
+        .eq('lecturer_id', user.id)
+        .single();
+
+      console.log('Class check result:', { classData, classCheckError });
+
+      if (classCheckError) {
+        throw new Error(`Class check failed: ${classCheckError.message}`);
+      }
+      
+      if (!classData) {
+        throw new Error('Class not found or you do not have permission to delete it');
+      }
+
+      // Verify the user is a lecturer
+      const profile = classData.profiles;
+      if (!profile || profile.role !== 'lecturer') {
+        throw new Error('Only lecturers can delete classes');
+      }
+
+      // Delete in sequence with detailed logging and error handling
+      console.log('Starting deletion sequence...');
+
+      // 1. Delete attendance records
+      const { data: sessions } = await supabase
+        .from('class_sessions')
+        .select('id')
+        .eq('class_id', classId);
+
+      if (sessions && sessions.length > 0) {
+        const sessionIds = sessions.map(session => session.id);
+        console.log('Deleting attendance records for sessions:', sessionIds);
+        
+        const { error: attendanceError } = await supabase
+          .from('attendance_records')
+          .delete()
+          .in('session_id', sessionIds);
+
+        if (attendanceError) {
+          throw new Error(`Failed to delete attendance records: ${attendanceError.message}`);
+        }
+      }
+
+      // 2. Delete sessions
+      console.log('Deleting sessions...');
+      const { error: sessionsError } = await supabase
+        .from('class_sessions')
         .delete()
-        .in('session_id', sessionIds);
+        .eq('class_id', classId);
 
-      if (attendanceError) throw attendanceError;
+      if (sessionsError) {
+        throw new Error(`Failed to delete sessions: ${sessionsError.message}`);
+      }
+
+      // 3. Delete enrollments
+      console.log('Deleting enrollments...');
+      const { error: enrollmentsError } = await supabase
+        .from('class_enrollments')
+        .delete()
+        .eq('class_id', classId);
+
+      if (enrollmentsError) {
+        throw new Error(`Failed to delete enrollments: ${enrollmentsError.message}`);
+      }
+
+      // 4. Delete the class itself with explicit RLS check
+      console.log('Deleting class...');
+      const { error: deleteError } = await supabase
+        .from('classes')
+        .delete()
+        .eq('id', classId)
+        .eq('lecturer_id', user.id); // Explicitly ensure lecturer ownership
+
+      if (deleteError) {
+        if (deleteError.code === '42501') { // PostgreSQL permission denied code
+          throw new Error('Permission denied: RLS policy preventing deletion');
+        }
+        throw new Error(`Failed to delete class: ${deleteError.message}`);
+      }
+
+      // Final verification
+      console.log('Verifying deletion...');
+      const { data: verifyData, error: verifyError } = await supabase
+        .from('classes')
+        .select()
+        .eq('id', classId)
+        .maybeSingle();
+
+      if (verifyError) {
+        throw new Error(`Verification failed: ${verifyError.message}`);
+      }
+
+      if (verifyData) {
+        console.error('Class still exists after deletion');
+        throw new Error('Class deletion failed: RLS policy is preventing deletion. Please check your database policies.');
+      }
+
+      console.log('Class deletion completed successfully');
+      return true;
+    } catch (error) {
+      console.error('Error in deleteClass:', error);
+      throw error;
     }
-
-    // 2. Delete all sessions
-    const { error: deleteSessionsError } = await supabase
-      .from('class_sessions')
-      .delete()
-      .eq('class_id', classId);
-
-    if (deleteSessionsError) throw deleteSessionsError;
-
-    // 3. Delete all enrollments
-    const { error: enrollmentsError } = await supabase
-      .from('class_enrollments')
-      .delete()
-      .eq('class_id', classId);
-
-    if (enrollmentsError) throw enrollmentsError;
-
-    // 4. Finally, delete the class itself
-    const { error: classError } = await supabase
-      .from('classes')
-      .delete()
-      .eq('id', classId);
-
-    if (classError) throw classError;
-
-    return true;
   },
 
-  // Class Sessions
+  async updateClass(classId: string, classData: Partial<Omit<Class, 'id' | 'created_at' | 'updated_at' | 'lecturer_id'>>) {
+    try {
+      // Get the current user first
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      // Verify ownership and lecturer role
+      const { data: existingClass, error: checkError } = await supabase
+        .from('classes')
+        .select('*, profiles!classes_lecturer_id_fkey(role)')
+        .eq('id', classId)
+        .eq('lecturer_id', user.id)
+        .single();
+
+      if (checkError || !existingClass) {
+        throw new Error('Class not found or you do not have permission to edit it');
+      }
+
+      const profile = existingClass.profiles;
+      if (!profile || profile.role !== 'lecturer') {
+        throw new Error('Only lecturers can edit classes');
+      }
+
+      // Update the class
+      const { data, error } = await supabase
+        .from('classes')
+        .update(classData)
+        .eq('id', classId)
+        .eq('lecturer_id', user.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error in updateClass:', error);
+      throw error;
+    }
+  },
+
   async createClassSession(session: Omit<ClassSession, 'id' | 'created_at'>) {
     const { data, error } = await supabase
       .from('class_sessions')
