@@ -3,6 +3,7 @@ export type User = {
   email: string;
   name: string;
   role: 'admin' | 'lecturer' | 'student';
+  studentId?: string;  // Optional field for student users
 };
 
 export type AuthState = {
@@ -12,11 +13,9 @@ export type AuthState = {
   error: string | null;
 };
 
-export type AuthContextType = {
-  authState: AuthState;
+export type AuthContextType = AuthState & {
   login: (email: string, password: string) => Promise<void>;
-  loginWithGoogle: () => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 };
 
 export type Class = {

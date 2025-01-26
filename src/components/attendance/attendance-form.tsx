@@ -200,26 +200,7 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
           )}
         </div>
 
-        {/* <div>
-          <label
-            htmlFor="schoolStudentId"
-            className="block text-sm font-medium text-gray-700 mb-1"
-          >
-            School Student ID
-          </label>
-          <Input
-            id="schoolStudentId"
-            {...register('schoolStudentId')}
-            type="text"
-            className="w-full"
-            placeholder="Enter your school student ID"
-          />
-          {errors.schoolStudentId && (
-            <p className="mt-1 text-sm text-red-600">
-              {errors.schoolStudentId.message}
-            </p>
-          )}
-        </div> */}
+        
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">

@@ -2,6 +2,7 @@ import { createContext, useContext, useReducer, useEffect, ReactNode } from 'rea
 import { AuthState, AuthContextType, User } from '@/lib/types';
 import { supabase } from '@/lib/supabase';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useToast } from '@/components/ui/use-toast';
 
 const initialState: AuthState = {
   isAuthenticated: false,
@@ -66,47 +67,91 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [state, dispatch] = useReducer(authReducer, initialState);
   const navigate = useNavigate();
   const location = useLocation();
+  const { toast } = useToast();
+
+  // Helper function to get redirect path based on user role
+  const getRedirectPath = (role: string): string => {
+    switch (role) {
+      case 'admin':
+        return '/admin/dashboard';
+      case 'lecturer':
+        return '/lecturer/dashboard';
+      case 'student':
+        return '/student/dashboard';
+      default:
+        return '/';
+    }
+  };
 
   const login = async (email: string, password: string) => {
     try {
       dispatch({ type: 'LOGIN_START' });
 
-      const { data: authData, error: signInError } = await retry(() =>
-        supabase.auth.signInWithPassword({
-          email,
-          password,
-        })
-      );
+      // First attempt to sign in
+      const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-      if (signInError) throw signInError;
+      if (signInError) {
+        throw signInError;
+      }
 
-      const { data: profileData, error: profileError } = await retry(() =>
-        supabase
-          .from('profiles')
-          .select('role, full_name')
-          .eq('user_id', authData.user.id)
-          .single()
-      );
+      if (!authData.user) {
+        throw new Error('No user data returned from login');
+      }
 
-      if (profileError) throw profileError;
+      // Then fetch the user's profile
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', authData.user.id)
+        .single();
+
+      if (profileError) {
+        console.error('Profile fetch error:', profileError);
+        throw new Error('Failed to fetch user profile');
+      }
+
+      if (!profile) {
+        console.error('No profile found for user:', authData.user.id);
+        throw new Error('User profile not found');
+      }
 
       const user: User = {
         id: authData.user.id,
         email: authData.user.email!,
-        name: profileData.full_name || email.split('@')[0],
-        role: profileData.role as 'admin' | 'lecturer' | 'student',
+        name: profile.full_name,
+        role: profile.role,
+        studentId: profile.student_id
       };
 
-      localStorage.setItem('auth_user', JSON.stringify(user));
       dispatch({ type: 'LOGIN_SUCCESS', payload: user });
 
-      const basePath = `/${user.role}`;
-      navigate(basePath);
+      // Show success toast
+      toast({
+        title: "Welcome back!",
+        description: `Logged in as ${user.name}`,
+      });
+
+      // Get the intended path from location state or default to role-based path
+      const intendedPath = location.state?.from || getRedirectPath(user.role);
+      navigate(intendedPath, { replace: true });
+
     } catch (error) {
       console.error('Login error:', error);
-      dispatch({
-        type: 'LOGIN_FAILURE',
-        payload: error instanceof Error ? error.message : 'Failed to sign in',
+      
+      let errorMessage = 'Failed to login';
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+      
+      dispatch({ type: 'LOGIN_FAILURE', payload: errorMessage });
+      
+      toast({
+        title: "Login Failed",
+        description: errorMessage,
+        variant: "destructive",
       });
     }
   };
@@ -140,17 +185,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const logout = async () => {
     try {
-      // First clear all auth state
+      await supabase.auth.signOut();
       dispatch({ type: 'LOGOUT' });
-      localStorage.removeItem('auth_user');
-      
-      // Then sign out from Supabase
-      await retry(() => supabase.auth.signOut());
-      
-      // Force a full page reload to clear any React state
-      window.location.replace('/');
+      navigate('/');
+      toast({
+        title: "Logged out",
+        description: "You have been successfully logged out",
+      });
     } catch (error) {
-      console.error('Error during logout:', error);
+      console.error('Logout error:', error);
+      toast({
+        title: "Logout Failed",
+        description: "Failed to log out. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -173,7 +221,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             supabase
               .from('profiles')
               .select('role, full_name')
-              .eq('user_id', session.user.id)
+              .eq('id', session.user.id)
               .single()
           );
 

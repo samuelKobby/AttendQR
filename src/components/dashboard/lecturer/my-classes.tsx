@@ -22,6 +22,19 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth-context';
 import { format } from 'date-fns';
 import { CreateClassForm } from './create-class-form';
+import { databaseService } from '@/services/database';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { toast } from 'sonner';
 
 interface Class {
   id: string;
@@ -37,6 +50,7 @@ interface Class {
 export function MyClasses() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [classes, setClasses] = useState<Class[]>([]);
+  const [loading, setLoading] = useState(false);
   const { authState } = useAuth();
 
   useEffect(() => {
@@ -45,6 +59,7 @@ export function MyClasses() {
 
   const fetchClasses = async () => {
     try {
+      setLoading(true);
       const { data, error } = await supabase
         .from('classes')
         .select('*')
@@ -52,9 +67,28 @@ export function MyClasses() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
+      
+      // Update the state with the new data
       setClasses(data || []);
     } catch (error) {
       console.error('Error fetching classes:', error);
+      toast.error('Failed to fetch classes');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteClass = async (classId: string) => {
+    try {
+      setLoading(true);
+      await databaseService.deleteClass(classId);
+      toast.success('Class deleted successfully');
+      fetchClasses(); // Refresh the list
+    } catch (error) {
+      console.error('Error deleting class:', error);
+      toast.error('Failed to delete class');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -88,8 +122,48 @@ export function MyClasses() {
                   <h3 className="font-semibold text-lg">{cls.name}</h3>
                   <p className="text-sm text-gray-500 mt-1">{cls.course_code}</p>
                 </div>
-                <div className="p-2 bg-blue-50 rounded-full">
-                  <BookOpen className="h-5 w-5 text-blue-500" />
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    onClick={() => {/* TODO: Add edit functionality */}}
+                  >
+                    <Edit className="h-4 w-4" />
+                  </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-red-500 hover:text-red-600 hover:bg-red-50"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Class</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Are you sure you want to delete "{cls.name}"? This action cannot be undone.
+                          All associated attendance records and sessions will also be deleted.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={async (e) => {
+                            e.preventDefault();
+                            await handleDeleteClass(cls.id);
+                          }}
+                          className="bg-red-500 hover:bg-red-600"
+                          disabled={loading}
+                        >
+                          {loading ? 'Deleting...' : 'Delete'}
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 </div>
               </div>
 
@@ -98,33 +172,38 @@ export function MyClasses() {
                   <Users className="h-4 w-4 mr-2" />
                   <span>{cls.total_students} Students</span>
                 </div>
-                <div className="flex items-center text-sm text-gray-600">
-                  <Calendar className="h-4 w-4 mr-2" />
-                  <span>{cls.schedule}</span>
-                </div>
-                <div className="flex items-center text-sm text-gray-600">
-                  <MapPin className="h-4 w-4 mr-2" />
-                  <span>{cls.location}</span>
-                </div>
+                {cls.location && (
+                  <div className="flex items-center text-sm text-gray-600">
+                    <MapPin className="h-4 w-4 mr-2" />
+                    <span>{cls.location}</span>
+                  </div>
+                )}
+                {cls.schedule && (
+                  <div className="flex items-center text-sm text-gray-600">
+                    <Calendar className="h-4 w-4 mr-2" />
+                    <span>{cls.schedule}</span>
+                  </div>
+                )}
               </div>
 
-              <div className="mt-6 flex flex-col sm:flex-row gap-2">
+              <div className="mt-4 flex flex-wrap gap-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  className="w-full sm:w-auto"
-                  onClick={() => {}}
-                >
-                  <History className="h-4 w-4 mr-2" />
-                  View History
-                </Button>
-                <Button
-                  size="sm"
-                  className="w-full sm:w-auto"
-                  onClick={() => {}}
+                  className="flex-1"
+                  onClick={() => {/* TODO: Add take attendance functionality */}}
                 >
                   <QrCode className="h-4 w-4 mr-2" />
                   Take Attendance
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => {/* TODO: Add view history functionality */}}
+                >
+                  <History className="h-4 w-4 mr-2" />
+                  View History
                 </Button>
               </div>
             </div>
@@ -134,36 +213,13 @@ export function MyClasses() {
 
       {/* Create Class Modal */}
       {showCreateForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h2 className="text-lg font-semibold mb-4">Create New Class</h2>
-            <CreateClassForm
-              onClose={() => setShowCreateForm(false)}
-              onSuccess={() => {
-                setShowCreateForm(false);
-                fetchClasses();
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Empty State */}
-      {classes.length === 0 && (
-        <div className="text-center py-12">
-          <BookOpen className="h-12 w-12 mx-auto text-gray-400" />
-          <h3 className="mt-4 text-lg font-medium text-gray-900">No Classes Yet</h3>
-          <p className="mt-2 text-sm text-gray-500">
-            Get started by creating your first class
-          </p>
-          <Button
-            onClick={() => setShowCreateForm(true)}
-            className="mt-4"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Create New Class
-          </Button>
-        </div>
+        <CreateClassForm
+          onClose={() => setShowCreateForm(false)}
+          onSuccess={() => {
+            setShowCreateForm(false);
+            fetchClasses();
+          }}
+        />
       )}
     </div>
   );
