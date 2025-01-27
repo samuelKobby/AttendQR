@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Lock, Mail, ArrowLeft, User, CreditCard } from 'lucide-react';
+import { Lock, Mail, ArrowLeft, User, CreditCard, QrCode } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/components/ui/use-toast';
 
@@ -121,18 +121,25 @@ export function SignupForm() {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 p-4">
-      <Button
-        variant="ghost"
-        className="absolute left-4 top-4"
-        onClick={() => navigate('/')}
-      >
-        <ArrowLeft className="mr-2 h-4 w-4" />
-        Back
-      </Button>
+      <div className="absolute left-4 top-4">
+        <Button
+          variant="ghost"
+          className="mr-4"
+          onClick={() => navigate('/')}
+        >
+          <ArrowLeft className="h-5 w-5" />
+        </Button>
+      </div>
 
       <div className="w-full max-w-md space-y-8">
         <div className="text-center">
-          <h2 className="mt-6 text-3xl font-bold tracking-tight">
+          <div className="flex items-center justify-center space-x-2 mb-2">
+            <QrCode className="h-8 w-8 text-blue-600" />
+            <span className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+              AttendanceQR
+            </span>
+          </div>
+          <h2 className="text-3xl font-bold text-gray-900">
             Sign up as {roleTitle}
           </h2>
           <p className="mt-2 text-sm text-gray-600">

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Lock, Mail, ArrowLeft } from 'lucide-react';
+import { Lock, Mail, ArrowLeft, QrCode } from 'lucide-react';
 import { useAuth } from '@/contexts/auth-context';
 
 export function LoginForm() {
@@ -47,6 +47,12 @@ export function LoginForm() {
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
+              <div className="flex items-center justify-center space-x-2 mb-2">
+                <QrCode className="h-8 w-8 text-blue-600" />
+                <span className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                  AttendanceQR
+                </span>
+              </div>
               <h2 className="text-3xl font-bold text-gray-900">
                 Sign in as {roleTitle}
               </h2>
