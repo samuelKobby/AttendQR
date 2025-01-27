@@ -154,6 +154,15 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
       }
 
       // Mark attendance
+      console.log('Attempting to insert attendance record with:', {
+        session_id: sessionId,
+        student_id: authState.user?.id,
+        student_name: data.studentName,
+        signature: data.signature,
+        marked_at: new Date().toISOString(),
+        auth_user_id: supabase.auth.getUser()
+      });
+
       const { error: attendanceError } = await supabase
         .from('attendance_records')
         .insert({
