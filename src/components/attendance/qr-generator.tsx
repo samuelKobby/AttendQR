@@ -63,6 +63,9 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
       setQrToken(token);
       setTimeLeft(sessionDuration * 60);
 
+      // Fetch attendees immediately after session creation
+      await fetchAttendees();
+
       // Verify the session was created
       const { data: verifyData, error: verifyError } = await supabase
         .rpc('get_session_by_id', {
@@ -85,31 +88,54 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
   };
 
   const fetchAttendees = async () => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      console.log('No sessionId available, skipping fetch');
+      return;
+    }
 
-    const { data, error } = await supabase
-      .from('attendance_records')
-      .select(`
-        student_id,
-        marked_at,
-        auth.users!inner (
-          email,
-          raw_user_meta_data->>'full_name' as student_name
-        )
-      `)
-      .eq('session_id', sessionId)
-      .order('marked_at', { ascending: false });
+    try {
+      console.log('Fetching attendees for session:', sessionId);
 
-    if (!error && data) {
-      setAttendees(
-        data.map((record) => ({
-          student_name: record.users.student_name || record.users.email,
-          marked_at: record.marked_at,
-        }))
-      );
+      const { data, error } = await supabase
+        .from('attendance_records')
+        .select(`
+          id,
+          student_id,
+          marked_at,
+          students:student_id (
+            id,
+            full_name,
+            email
+          )
+        `)
+        .eq('session_id', sessionId);
+
+      console.log('Raw attendance data:', data);
+      
+      if (error) {
+        console.error('Error fetching attendees:', error);
+        return;
+      }
+
+      if (!data) {
+        console.log('No data returned from query');
+        return;
+      }
+
+      const formattedAttendees = data.map((record) => ({
+        student_name: record.students?.full_name || record.students?.email || 'Unknown Student',
+        marked_at: record.marked_at,
+      }));
+
+      console.log('Formatted attendees:', formattedAttendees);
+      setAttendees(formattedAttendees);
+      
+    } catch (err) {
+      console.error('Exception in fetchAttendees:', err);
     }
   };
 
+  // Separate useEffect for timer countdown
   useEffect(() => {
     let timer: number;
     if (timeLeft > 0) {
@@ -122,16 +148,29 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
           return prev - 1;
         });
       }, 1000);
-
-      // Fetch attendees every 10 seconds
-      const attendeesTimer = setInterval(fetchAttendees, 10000);
-      return () => {
-        clearInterval(timer);
-        clearInterval(attendeesTimer);
-      };
     }
     return () => clearInterval(timer);
-  }, [timeLeft, sessionId]);
+  }, [timeLeft]);
+
+  // Separate useEffect for fetching attendees
+  useEffect(() => {
+    let attendeesTimer: number;
+    
+    if (sessionId) {
+      console.log('Setting up attendees polling for session:', sessionId);
+      // Fetch immediately
+      fetchAttendees();
+      // Then fetch every 5 seconds
+      attendeesTimer = window.setInterval(fetchAttendees, 5000);
+    }
+
+    return () => {
+      if (attendeesTimer) {
+        console.log('Cleaning up attendees timer');
+        clearInterval(attendeesTimer);
+      }
+    };
+  }, [sessionId]); // Only re-run when sessionId changes
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);

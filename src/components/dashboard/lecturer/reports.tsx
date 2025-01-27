@@ -76,7 +76,11 @@ export function Reports() {
     totalSessions: 0,
   });
   const [classes, setClasses] = useState<Class[]>([]);
-  const [dateRange, setDateRange] = useState<[Date | null, Date | null]>([null, null]);
+  const [dateRange, setDateRange] = useState<[Date, Date]>([
+    startOfMonth(new Date()),
+    endOfMonth(new Date())
+  ]);
+  const [filterOpen, setFilterOpen] = useState(false);
   const [reports, setReports] = useState<AttendanceReport[]>([]);
   const { authState } = useAuth();
   const { toast } = useToast();
@@ -189,7 +193,7 @@ export function Reports() {
 
   const fetchClassData = async () => {
     try {
-      const { data: classes } = await supabase
+      const { data: classes, error } = await supabase
         .from('classes')
         .select(`
           id,
@@ -202,14 +206,37 @@ export function Reports() {
         `)
         .eq('lecturer_id', authState.user?.id);
 
-      if (classes) {
-        const classStats = classes.map(cls => {
-          const totalStudents = cls.class_enrollments[0]?.count || 0;
-          const totalSessions = cls.class_sessions.length;
-          const totalAttendances = cls.class_sessions.reduce(
+      if (error) {
+        console.error('Error fetching class data:', error);
+        return;
+      }
+
+      const formattedClassData = await Promise.all(
+        classes.map(async (cls) => {
+          // Get total students in class
+          const { data: enrollments } = await supabase
+            .from('class_enrollments')
+            .select('count')
+            .eq('class_id', cls.id)
+            .single();
+
+          // Get attendance records within date range
+          const { data: sessions } = await supabase
+            .from('class_sessions')
+            .select(`
+              id,
+              attendance_records (count)
+            `)
+            .eq('class_id', cls.id)
+            .gte('start_time', dateRange[0].toISOString())
+            .lte('end_time', dateRange[1].toISOString());
+
+          const totalStudents = enrollments?.count || 0;
+          const totalSessions = sessions?.length || 0;
+          const totalAttendances = sessions?.reduce(
             (acc, session) => acc + (session.attendance_records[0]?.count || 0),
             0
-          );
+          ) || 0;
 
           const attendanceRate = totalSessions > 0 && totalStudents > 0
             ? (totalAttendances / (totalSessions * totalStudents)) * 100
@@ -218,14 +245,14 @@ export function Reports() {
           return {
             name: cls.name,
             students: totalStudents,
-            attendance: Math.round(attendanceRate),
+            attendance: Math.round(attendanceRate)
           };
-        });
+        })
+      );
 
-        setClassData(classStats);
-      }
+      setClassData(formattedClassData);
     } catch (error) {
-      console.error('Error fetching class data:', error);
+      console.error('Error in fetchClassData:', error);
     }
   };
 
@@ -382,6 +409,10 @@ export function Reports() {
     }
   };
 
+  useEffect(() => {
+    fetchClassData();
+  }, [dateRange, authState.user?.id]);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -428,7 +459,7 @@ export function Reports() {
               <input
                 type="date"
                 className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                value={dateRange[0]?.toISOString().split('T')[0] || ''}
+                value={dateRange[0].toISOString().split('T')[0] || ''}
                 onChange={(e) =>
                   setDateRange([new Date(e.target.value), dateRange[1]])
                 }
@@ -437,7 +468,7 @@ export function Reports() {
               <input
                 type="date"
                 className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                value={dateRange[1]?.toISOString().split('T')[0] || ''}
+                value={dateRange[1].toISOString().split('T')[0] || ''}
                 onChange={(e) =>
                   setDateRange([dateRange[0], new Date(e.target.value)])
                 }
@@ -583,13 +614,41 @@ export function Reports() {
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-semibold">Class Performance</h2>
           <div className="flex items-center space-x-2">
-            <Button variant="outline" size="sm">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={() => {
+                const now = new Date();
+                setDateRange([
+                  startOfMonth(now),
+                  endOfMonth(now)
+                ]);
+                toast({
+                  title: "Date range updated",
+                  description: "Showing data for current month"
+                });
+              }}
+            >
               <Filter className="h-4 w-4 mr-2" />
-              Filter
+              This Month
             </Button>
-            <Button variant="outline" size="sm">
-              <FileText className="h-4 w-4 mr-2" />
-              Detailed Report
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => {
+                const now = new Date();
+                setDateRange([
+                  startOfMonth(subMonths(now, 1)),
+                  endOfMonth(subMonths(now, 1))
+                ]);
+                toast({
+                  title: "Date range updated",
+                  description: "Showing data for last month"
+                });
+              }}
+            >
+              <Calendar className="h-4 w-4 mr-2" />
+              Last Month
             </Button>
           </div>
         </div>
