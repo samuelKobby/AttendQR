@@ -9,7 +9,7 @@ interface Notification {
   id: string;
   title: string;
   message: string;
-  timestamp: string;
+  created_at: string;
   read: boolean;
   type: 'warning' | 'success' | 'info';
 }
@@ -23,43 +23,71 @@ export function StudentNotifications() {
   }, []);
 
   const fetchNotifications = async () => {
+    if (!authState.user?.id) return;
+
     try {
-      const { data } = await supabase
+      console.log('Fetching notifications for user:', authState.user.id);
+      
+      const { data, error } = await supabase
         .from('notifications')
         .select('*')
-        .eq('user_id', authState.user?.id)
-        .order('timestamp', { ascending: false });
+        .eq('user_id', authState.user.id)
+        .order('created_at', { ascending: false })
+        .limit(5);
 
-      if (data) {
-        setNotifications(data);
+      if (error) {
+        console.error('Supabase query error:', error);
+        throw error;
+      }
+
+      console.log('Fetched notifications:', data);
+      
+      // Ensure we have valid data before setting state
+      if (Array.isArray(data)) {
+        setNotifications(data.filter(n => n && n.created_at));
       }
     } catch (error) {
       console.error('Error fetching notifications:', error);
+      setNotifications([]);
     }
   };
 
   const markAsRead = async (notificationId: string) => {
+    if (!authState.user?.id) return;
+
     try {
-      await supabase
+      const { error } = await supabase
         .from('notifications')
         .update({ read: true })
-        .eq('id', notificationId);
+        .eq('id', notificationId)
+        .eq('user_id', authState.user.id);
 
-      setNotifications((prev) =>
-        prev.map((notification) =>
-          notification.id === notificationId
-            ? { ...notification, read: true }
-            : notification
-        )
-      );
+      if (error) throw error;
+      
+      // Refresh notifications after marking as read
+      fetchNotifications();
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }
   };
 
+  const formatDate = (dateString: string | null | undefined) => {
+    if (!dateString) {
+      console.log('No date string provided');
+      return '';
+    }
+    try {
+      const date = parseISO(dateString);
+      return format(date, 'MMM d, HH:mm');
+    } catch (error) {
+      console.error('Error formatting date:', error, 'dateString:', dateString);
+      return '';
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between  gap-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold">Notifications</h1>
           <p className="text-sm text-gray-500">Stay updated with your attendance and classes</p>
@@ -114,7 +142,7 @@ export function StudentNotifications() {
                       {notification.title}
                     </p>
                     <span className="text-xs text-gray-500 whitespace-nowrap">
-                      {format(parseISO(notification.timestamp), 'MMM d, HH:mm')}
+                      {formatDate(notification.created_at)}
                     </span>
                   </div>
                   <p className="mt-1 text-xs sm:text-sm text-gray-600 line-clamp-2">

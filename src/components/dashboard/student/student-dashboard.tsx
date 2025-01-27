@@ -56,7 +56,7 @@ interface Notification {
   title: string;
   message: string;
   type: 'info' | 'warning' | 'success';
-  timestamp: string;
+  created_at: string;
   read: boolean;
 }
 
@@ -291,7 +291,7 @@ export function StudentDashboard() {
         .from('notifications')
         .select('*')
         .eq('user_id', authState.user?.id)
-        .order('timestamp', { ascending: false })
+        .order('created_at', { ascending: false })
         .limit(5);
 
       if (error) throw error;
@@ -676,7 +676,7 @@ export function StudentDashboard() {
                   {notification.message}
                 </p>
                 <p className="text-xs text-gray-500 mt-2">
-                  {format(parseISO(notification.timestamp), 'MMM d, HH:mm')}
+                  {format(parseISO(notification.created_at), 'MMM d, HH:mm')}
                 </p>
               </div>
             ))}
@@ -738,7 +738,7 @@ export function StudentDashboard() {
                       {notification.message}
                     </p>
                     <p className="text-xs text-gray-500 mt-2">
-                      {format(parseISO(notification.timestamp), 'MMM d, HH:mm')}
+                      {format(parseISO(notification.created_at), 'MMM d, HH:mm')}
                     </p>
                   </div>
                 ))

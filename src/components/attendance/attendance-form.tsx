@@ -315,6 +315,7 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
         .insert({
           session_id: sessionId,
           student_id: authState.user?.id,
+          school_student_id: data.schoolStudentId,
           student_name: data.studentName,
           signature: data.signature,
           marked_at: new Date().toISOString(),
@@ -324,6 +325,34 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
 
       if (attendanceError) {
         throw attendanceError;
+      }
+
+      // Create notifications for both student and lecturer
+      const notifications = [
+        {
+          // Student notification
+          user_id: authState.user?.id,
+          title: 'Attendance Marked',
+          message: `Your attendance has been recorded for ${session.classes.name}`,
+          type: 'success',
+          read: false
+        },
+        {
+          // Lecturer notification
+          user_id: session.lecturer_id,
+          title: 'New Attendance',
+          message: `${data.studentName} has marked attendance for ${session.classes.name}`,
+          type: 'info',
+          read: false
+        }
+      ];
+
+      const { error: notificationError } = await supabase
+        .from('notifications')
+        .insert(notifications);
+
+      if (notificationError) {
+        console.error('Error creating notifications:', notificationError);
       }
 
       setSuccess(true);

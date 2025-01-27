@@ -37,39 +37,53 @@ export function AttendanceHistory() {
   }, [authState.user?.id]);
 
   const fetchAttendanceHistory = async () => {
+    if (!authState.user?.id) return;
+    
     try {
+      console.log('Fetching attendance history for user:', authState.user.id);
+      
       const { data, error } = await supabase
         .from('attendance_records')
         .select(`
           id,
           marked_at,
+          status,
+          session_id,
           class_sessions!inner (
             start_time,
-            classes (
+            end_time,
+            class_id,
+            classes!inner (
               name,
               course_code
             )
           )
         `)
-        .eq('student_id', authState.user?.id)
+        .eq('student_id', authState.user.id)
         .order('marked_at', { ascending: false });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase query error:', error);
+        throw error;
+      }
 
-      const history = data?.map((record) => ({
-        id: record.id,
-        date: record.class_sessions.start_time,
-        class_name: record.class_sessions.classes.name,
-        course_code: record.class_sessions.classes.course_code,
-        marked_at: record.marked_at,
-        status:
-          new Date(record.marked_at).getTime() -
-            new Date(record.class_sessions.start_time).getTime() <=
-          15 * 60 * 1000
-            ? 'present'
-            : 'late',
-      })) || [];
+      console.log('Raw attendance data:', data);
 
+      const history = data
+        ?.filter(record => 
+          record.class_sessions && 
+          record.class_sessions.classes
+        )
+        .map((record) => ({
+          id: record.id,
+          date: record.class_sessions.start_time,
+          class_name: record.class_sessions.classes.name,
+          course_code: record.class_sessions.classes.course_code,
+          marked_at: record.marked_at,
+          status: record.status || 'present'
+        })) || [];
+
+      console.log('Processed attendance history:', history);
       setAttendanceHistory(history);
     } catch (error) {
       console.error('Error fetching attendance history:', error);
