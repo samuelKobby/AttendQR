@@ -36,16 +36,41 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
         },
         (decodedText) => {
           try {
+            console.log('Raw QR code text:', decodedText);
             const url = new URL(decodedText);
+            console.log('Parsed URL:', {
+              full: url.toString(),
+              pathname: url.pathname,
+              search: url.search,
+              params: Object.fromEntries(url.searchParams)
+            });
+            
+            // Get session and token from URL parameters
             const sessionId = url.searchParams.get('session');
             const token = url.searchParams.get('token');
+
+            console.log('Extracted session data:', { 
+              sessionId, 
+              token,
+              hasSession: !!sessionId,
+              hasToken: !!token
+            });
 
             if (sessionId && token) {
               onScan({ sessionId, token });
               stopScanning();
+            } else {
+              console.error('Missing required parameters in QR code:', { 
+                sessionId, 
+                token,
+                url: url.toString() 
+              });
             }
           } catch (error) {
-            console.error('Invalid QR code format:', error);
+            console.error('Invalid QR code format:', {
+              error,
+              text: decodedText
+            });
           }
         },
         undefined

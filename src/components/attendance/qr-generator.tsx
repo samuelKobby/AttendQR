@@ -27,6 +27,14 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
       const endTime = new Date(startTime.getTime() + sessionDuration * 60000);
       const token = crypto.randomUUID();
 
+      console.log('Generating session with:', {
+        class_id: classId,
+        lecturer_id: authState.user?.id,
+        token,
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString()
+      });
+
       const { data, error } = await supabase
         .from('class_sessions')
         .insert({
@@ -37,14 +45,40 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
           end_time: endTime.toISOString(),
           active: true,
         })
-        .select()
+        .select('id, qr_token, active, start_time, end_time')
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error creating session:', error);
+        throw error;
+      }
+
+      console.log('Session created successfully:', {
+        data,
+        token,
+        qrToken: data.qr_token
+      });
 
       setSessionId(data.id);
       setQrToken(token);
       setTimeLeft(sessionDuration * 60);
+
+      // Verify the session was created
+      const { data: verifyData, error: verifyError } = await supabase
+        .rpc('get_session_by_id', {
+          session_id: data.id
+        });
+
+      console.log('Session verification:', {
+        data: verifyData,
+        error: verifyError,
+        query: {
+          id: data.id,
+          token: token,
+          storedToken: Array.isArray(verifyData) ? verifyData[0]?.qr_token : verifyData?.qr_token
+        }
+      });
+
     } catch (error) {
       console.error('Error generating session:', error);
     }

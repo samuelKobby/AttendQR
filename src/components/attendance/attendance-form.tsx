@@ -32,6 +32,107 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
   const { authState } = useAuth();
   const navigate = useNavigate();
 
+  // Log initialization props and auth state
+  console.log('AttendanceForm initialized with:', {
+    sessionId,
+    token,
+    authState: {
+      isAuthenticated: authState.isAuthenticated,
+      userId: authState.user?.id,
+      studentId: authState.user?.student_id,
+      name: authState.user?.name
+    }
+  });
+
+  useEffect(() => {
+    // Verify session on component mount
+    const verifySession = async () => {
+      if (!sessionId) {
+        console.error('No session ID provided');
+        setError('Invalid session');
+        return;
+      }
+
+      try {
+        console.log('Verifying session:', { sessionId, token });
+        
+        // First check if the session exists using rpc
+        const { data: sessionData, error: sessionError } = await supabase
+          .rpc('get_session_by_id', {
+            session_id: sessionId
+          });
+
+        console.log('Session verification result:', { 
+          data: sessionData, 
+          error: sessionError,
+          query: {
+            id: sessionId,
+            token: token
+          }
+        });
+
+        if (sessionError) {
+          console.error('Session verification failed:', sessionError);
+          setError('Invalid session');
+          return;
+        }
+
+        // Since the function returns an array with one item
+        const sessionCheck = Array.isArray(sessionData) ? sessionData[0] : sessionData;
+
+        if (!sessionCheck) {
+          console.error('No session found');
+          setError('Session not found');
+          return;
+        }
+
+        // Verify token matches
+        if (sessionCheck.qr_token !== token) {
+          console.error('Token mismatch:', {
+            provided: token,
+            expected: sessionCheck.qr_token
+          });
+          setError('Invalid QR code');
+          return;
+        }
+
+        // Check if session is active
+        if (!sessionCheck.active) {
+          console.error('Session is not active');
+          setError('Session is not active');
+          return;
+        }
+
+        // Check session time
+        const now = new Date();
+        const startTime = new Date(sessionCheck.start_time);
+        const endTime = new Date(sessionCheck.end_time);
+
+        console.log('Time validation:', {
+          now: now.toISOString(),
+          startTime: startTime.toISOString(),
+          endTime: endTime.toISOString()
+        });
+
+        if (now < startTime) {
+          setError('Session has not started yet');
+          return;
+        }
+
+        if (now > endTime) {
+          setError('Session has expired');
+          return;
+        }
+
+      } catch (err) {
+        console.error('Error in session verification:', err);
+        setError('Error verifying session');
+      }
+    };
+
+    verifySession();
+  }, [sessionId, token]);
+
   // Log auth state for debugging
   console.log('Auth State:', authState);
   console.log('User:', authState.user);
@@ -84,6 +185,7 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
   const onSubmit = async (data: AttendanceFormData) => {
     console.log('Form submitted with data:', data);
     console.log('Auth state during submission:', authState.user);
+    console.log('Session and token:', { sessionId, token });
     
     if (!sessionId || !token) {
       console.log('Missing sessionId or token:', { sessionId, token });
@@ -95,26 +197,71 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
     setError(null);
 
     try {
-      // Verify session is still valid
-      const { data: session, error: sessionError } = await supabase
-        .from('class_sessions')
-        .select('*, classes(name)')
-        .eq('id', sessionId)
-        .eq('qr_token', token)
-        .eq('active', true)
+      // First check if the session exists
+      console.log('Checking session existence:', { sessionId });
+      const { data: sessionData, error: sessionError } = await supabase
+        .rpc('get_session_by_id', {
+          session_id: sessionId
+        });
+
+      if (sessionError) {
+        console.error('Session check error:', sessionError);
+        throw new Error('Session not found');
+      }
+
+      // Get the first row since rpc returns an array
+      const sessionCheck = Array.isArray(sessionData) ? sessionData[0] : sessionData;
+
+      if (!sessionCheck) {
+        console.error('No session found with ID:', sessionId);
+        throw new Error('Session not found');
+      }
+
+      console.log('Found session:', sessionCheck);
+
+      // Then check if the token matches
+      if (sessionCheck.qr_token !== token) {
+        console.error('Token mismatch:', {
+          provided: token,
+          expected: sessionCheck.qr_token
+        });
+        throw new Error('Invalid QR code token');
+      }
+
+      // Check if the session is active
+      if (!sessionCheck.active) {
+        console.error('Session is not active');
+        throw new Error('Session is not active');
+      }
+
+      // Get the class name
+      const { data: classData, error: classError } = await supabase
+        .from('classes')
+        .select('name')
+        .eq('id', sessionCheck.class_id)
         .single();
 
-      console.log('Session verification result:', { session, error: sessionError });
-
-      if (sessionError || !session) {
-        throw new Error('Invalid or expired session');
+      if (classError) {
+        console.error('Error getting class details:', classError);
+        throw new Error('Error getting class details');
       }
+
+      const session = {
+        ...sessionCheck,
+        classes: classData
+      };
+
+      console.log('Full session details:', session);
 
       const now = new Date();
       const startTime = new Date(session.start_time);
       const endTime = new Date(session.end_time);
 
-      console.log('Time validation:', { now, startTime, endTime });
+      console.log('Time validation:', { 
+        now: now.toISOString(), 
+        startTime: startTime.toISOString(), 
+        endTime: endTime.toISOString() 
+      });
 
       if (now < startTime) {
         throw new Error('Session has not started yet');
