@@ -123,7 +123,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         email: authData.user.email!,
         name: profile.full_name,
         role: profile.role,
-        studentId: profile.student_id
+        student_id: profile.student_id
       };
 
       dispatch({ type: 'LOGIN_SUCCESS', payload: user });
@@ -220,7 +220,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           const { data: profileData, error: profileError } = await retry(() =>
             supabase
               .from('profiles')
-              .select('role, full_name')
+              .select('role, full_name, student_id')
               .eq('id', session.user.id)
               .single()
           );
@@ -232,6 +232,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             email: session.user.email!,
             name: profileData.full_name || session.user.email!.split('@')[0],
             role: profileData.role as 'admin' | 'lecturer' | 'student',
+            student_id: profileData.student_id
           };
 
           localStorage.setItem('auth_user', JSON.stringify(user));

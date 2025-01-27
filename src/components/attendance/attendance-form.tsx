@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,10 +32,16 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
   const { authState } = useAuth();
   const navigate = useNavigate();
 
+  // Log auth state for debugging
+  console.log('Auth State:', authState);
+  console.log('User:', authState.user);
+  console.log('Student ID:', authState.user?.student_id);
+
   const {
     register,
     handleSubmit,
     setValue,
+    watch,
     formState: { errors },
   } = useForm<AttendanceFormData>({
     resolver: zodResolver(attendanceSchema),
@@ -43,12 +49,44 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
       studentId: authState.user?.id || '',
       studentName: authState.user?.name || '',
       signature: '',
-      schoolStudentId: ''
+      schoolStudentId: authState.user?.student_id || ''
     },
   });
 
+  // Watch the schoolStudentId field for changes
+  const schoolStudentId = watch('schoolStudentId');
+  console.log('Current schoolStudentId:', schoolStudentId);
+
+  // Effect to update form values when auth state changes
+  useEffect(() => {
+    if (authState.user) {
+      console.log('Setting form values with:', {
+        id: authState.user.id,
+        name: authState.user.name,
+        student_id: authState.user.student_id
+      });
+      setValue('studentId', authState.user.id || '');
+      setValue('studentName', authState.user.name || '');
+      setValue('schoolStudentId', authState.user.student_id || '');
+    }
+  }, [authState.user, setValue]);
+
+  // Add a useEffect to check if form values are set correctly
+  useEffect(() => {
+    const values = {
+      studentId: watch('studentId'),
+      studentName: watch('studentName'),
+      schoolStudentId: watch('schoolStudentId')
+    };
+    console.log('Current form values:', values);
+  }, [watch]);
+
   const onSubmit = async (data: AttendanceFormData) => {
+    console.log('Form submitted with data:', data);
+    console.log('Auth state during submission:', authState.user);
+    
     if (!sessionId || !token) {
+      console.log('Missing sessionId or token:', { sessionId, token });
       setError('Invalid session or token');
       return;
     }
@@ -66,6 +104,8 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
         .eq('active', true)
         .single();
 
+      console.log('Session verification result:', { session, error: sessionError });
+
       if (sessionError || !session) {
         throw new Error('Invalid or expired session');
       }
@@ -73,6 +113,8 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
       const now = new Date();
       const startTime = new Date(session.start_time);
       const endTime = new Date(session.end_time);
+
+      console.log('Time validation:', { now, startTime, endTime });
 
       if (now < startTime) {
         throw new Error('Session has not started yet');
@@ -83,17 +125,29 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
       }
 
       // Verify student ID matches the authenticated user
-      if (data.studentId !== authState.user?.id) {
+      console.log('Student ID verification:', {
+        formStudentId: data.schoolStudentId,
+        userStudentId: authState.user?.student_id,
+        rawAuthState: authState
+      });
+
+      if (!authState.user?.student_id) {
+        throw new Error('Student ID not found in your profile');
+      }
+
+      if (data.schoolStudentId !== authState.user.student_id) {
         throw new Error('Student ID does not match your account');
       }
 
       // Check for existing attendance
-      const { data: existingAttendance } = await supabase
+      const { data: existingAttendance, error: attendanceCheckError } = await supabase
         .from('attendance_records')
         .select('id')
         .eq('session_id', sessionId)
-        .eq('student_id', data.studentId)
+        .eq('student_id', authState.user?.id)
         .single();
+
+      console.log('Existing attendance check:', { existingAttendance, error: attendanceCheckError });
 
       if (existingAttendance) {
         throw new Error('You have already marked attendance for this session');
@@ -104,12 +158,13 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
         .from('attendance_records')
         .insert({
           session_id: sessionId,
-          student_id: data.studentId,
+          student_id: authState.user?.id,
           student_name: data.studentName,
-          school_student_id: data.schoolStudentId,
           signature: data.signature,
           marked_at: new Date().toISOString(),
         });
+
+      console.log('Attendance marking result:', { error: attendanceError });
 
       if (attendanceError) {
         throw attendanceError;
@@ -125,6 +180,7 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
         });
       }, 2000);
     } catch (err) {
+      console.error('Attendance marking failed:', err);
       setError(err instanceof Error ? err.message : 'Failed to mark attendance');
     } finally {
       setLoading(false);
@@ -160,21 +216,21 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
         <div>
           <label
-            htmlFor="studentId"
+            htmlFor="schoolStudentId"
             className="block text-sm font-medium text-gray-700 mb-1"
           >
             Student ID
           </label>
           <Input
-            id="studentId"
-            {...register('studentId')}
+            id="schoolStudentId"
+            {...register('schoolStudentId')}
             type="text"
             className="w-full"
             disabled={true}
           />
-          {errors.studentId && (
+          {errors.schoolStudentId && (
             <p className="mt-1 text-sm text-red-600">
-              {errors.studentId.message}
+              {errors.schoolStudentId.message}
             </p>
           )}
         </div>
@@ -199,8 +255,6 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
             </p>
           )}
         </div>
-
-        
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">

@@ -140,7 +140,7 @@ export function Notifications() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between mt-10">
         <div>
           <h1 className="text-2xl font-bold">Notifications</h1>
           <p className="text-sm text-gray-500">

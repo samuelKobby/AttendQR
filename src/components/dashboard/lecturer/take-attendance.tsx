@@ -61,7 +61,7 @@ export function TakeAttendance() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mt-10 gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold">Take Attendance</h1>
           <p className="text-sm text-gray-500">Generate QR codes for your classes</p>

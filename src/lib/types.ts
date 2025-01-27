@@ -3,7 +3,7 @@ export type User = {
   email: string;
   name: string;
   role: 'admin' | 'lecturer' | 'student';
-  studentId?: string;  // Optional field for student users
+  student_id?: string;  // Updated to match metadata field name
 };
 
 export type AuthState = {
@@ -29,10 +29,11 @@ export type Class = {
 
 export type AttendanceRecord = {
   id: string;
-  classId: string;
-  studentId: string;
-  timestamp: string;
-  status: 'present' | 'absent';
+  session_id: string;
+  student_id: string;
+  student_name: string;
+  marked_at: string;
+  signature: string;
 };
 
 export type QRCode = {
