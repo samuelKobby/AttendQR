@@ -74,6 +74,12 @@ export function Reports() {
     averageAttendance: 0,
     totalClasses: 0,
     totalSessions: 0,
+    changes: {
+      students: '0%',
+      attendance: '0%',
+      classes: '0',
+      sessions: '0%'
+    }
   });
   const [classes, setClasses] = useState<Class[]>([]);
   const [dateRange, setDateRange] = useState<[Date, Date]>([
@@ -82,6 +88,7 @@ export function Reports() {
   ]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [reports, setReports] = useState<AttendanceReport[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const { authState } = useAuth();
   const { toast } = useToast();
 
@@ -96,52 +103,156 @@ export function Reports() {
 
   const fetchStats = async () => {
     try {
-      // Get total students across all classes
-      const { data: enrollments } = await supabase
-        .from('class_enrollments')
-        .select('student_id')
-        .in(
-          'class_id',
-          supabase
-            .from('classes')
-            .select('id')
-            .eq('lecturer_id', authState.user?.id)
-        );
-
-      // Get total classes
-      const { data: classes } = await supabase
+      console.log('Fetching stats for date range:', dateRange);
+      
+      // Get current period stats
+      const { data: currentClasses } = await supabase
         .from('classes')
-        .select('id')
-        .eq('lecturer_id', authState.user?.id);
-
-      // Get total sessions and attendance
-      const { data: sessions } = await supabase
-        .from('class_sessions')
         .select(`
           id,
-          attendance_records (count)
+          class_enrollments!inner (
+            student_id
+          ),
+          class_sessions!inner (
+            id,
+            start_time,
+            attendance_records (
+              student_id
+            )
+          )
         `)
         .eq('lecturer_id', authState.user?.id);
 
-      const totalStudents = new Set(enrollments?.map(e => e.student_id)).size;
-      const totalSessions = sessions?.length || 0;
-      const totalAttendances = sessions?.reduce(
-        (acc, session) => acc + (session.attendance_records[0]?.count || 0),
-        0
-      ) || 0;
+      // Get previous period stats for comparison
+      const previousStart = new Date(dateRange[0]);
+      previousStart.setMonth(previousStart.getMonth() - 1);
+      const previousEnd = new Date(dateRange[1]);
+      previousEnd.setMonth(previousEnd.getMonth() - 1);
 
-      const averageAttendance = totalSessions > 0
-        ? (totalAttendances / (totalSessions * totalStudents)) * 100
+      const { data: previousClasses } = await supabase
+        .from('classes')
+        .select(`
+          id,
+          class_enrollments (
+            student_id
+          ),
+          class_sessions (
+            id,
+            start_time,
+            attendance_records (
+              student_id
+            )
+          )
+        `)
+        .eq('lecturer_id', authState.user?.id);
+
+      // Calculate current period stats
+      const currentStats = {
+        totalStudents: 0,
+        totalAttendances: 0,
+        totalSessions: 0
+      };
+
+      if (currentClasses) {
+        // Calculate unique students across all classes
+        const allStudents = new Set();
+        currentClasses.forEach(cls => {
+          cls.class_enrollments.forEach(enrollment => {
+            allStudents.add(enrollment.student_id);
+          });
+        });
+        currentStats.totalStudents = allStudents.size;
+
+        // Calculate sessions and attendance in date range
+        currentClasses.forEach(cls => {
+          const sessionsInRange = cls.class_sessions.filter(session => {
+            const sessionDate = new Date(session.start_time);
+            return sessionDate >= dateRange[0] && sessionDate <= dateRange[1];
+          });
+          currentStats.totalSessions += sessionsInRange.length;
+          currentStats.totalAttendances += sessionsInRange.reduce(
+            (acc, session) => acc + (session.attendance_records?.length || 0),
+            0
+          );
+        });
+      }
+
+      // Calculate previous period stats
+      const previousStats = {
+        totalStudents: 0,
+        totalAttendances: 0,
+        totalSessions: 0
+      };
+
+      if (previousClasses) {
+        const allStudents = new Set();
+        previousClasses.forEach(cls => {
+          cls.class_enrollments?.forEach(enrollment => {
+            allStudents.add(enrollment.student_id);
+          });
+        });
+        previousStats.totalStudents = allStudents.size;
+
+        previousClasses.forEach(cls => {
+          const sessionsInRange = cls.class_sessions?.filter(session => {
+            const sessionDate = new Date(session.start_time);
+            return sessionDate >= previousStart && sessionDate <= previousEnd;
+          }) || [];
+          previousStats.totalSessions += sessionsInRange.length;
+          previousStats.totalAttendances += sessionsInRange.reduce(
+            (acc, session) => acc + (session.attendance_records?.length || 0),
+            0
+          );
+        });
+      }
+
+      // Calculate percentage changes
+      const calculateChange = (current: number, previous: number) => {
+        if (previous === 0) return current > 0 ? '+100%' : '0%';
+        const change = ((current - previous) / previous) * 100;
+        return change > 0 ? `+${change.toFixed(1)}%` : `${change.toFixed(1)}%`;
+      };
+
+      const calculateAbsoluteChange = (current: number, previous: number) => {
+        const change = current - previous;
+        return change > 0 ? `+${change}` : `${change}`;
+      };
+
+      // Calculate average attendance
+      const averageAttendance = currentStats.totalSessions > 0 && currentStats.totalStudents > 0
+        ? (currentStats.totalAttendances / (currentStats.totalSessions * currentStats.totalStudents)) * 100
+        : 0;
+
+      const previousAvgAttendance = previousStats.totalSessions > 0 && previousStats.totalStudents > 0
+        ? (previousStats.totalAttendances / (previousStats.totalSessions * previousStats.totalStudents)) * 100
         : 0;
 
       setStats({
-        totalStudents,
+        totalStudents: currentStats.totalStudents,
         averageAttendance: Math.round(averageAttendance),
-        totalClasses: classes?.length || 0,
-        totalSessions,
+        totalClasses: currentClasses?.length || 0,
+        totalSessions: currentStats.totalSessions,
+        changes: {
+          students: calculateChange(currentStats.totalStudents, previousStats.totalStudents),
+          attendance: calculateChange(averageAttendance, previousAvgAttendance),
+          classes: calculateAbsoluteChange(currentClasses?.length || 0, previousClasses?.length || 0),
+          sessions: calculateChange(currentStats.totalSessions, previousStats.totalSessions)
+        }
       });
+
+      console.log('Stats calculated:', {
+        current: currentStats,
+        previous: previousStats,
+        changes: stats.changes
+      });
+
     } catch (error) {
       console.error('Error fetching stats:', error);
+      toast({
+        title: "Error fetching statistics",
+        description: "Please try again later",
+        variant: "destructive"
+      });
     }
   };
 
@@ -193,66 +304,85 @@ export function Reports() {
 
   const fetchClassData = async () => {
     try {
+      setIsLoading(true);
+      console.log('Fetching class data for date range:', dateRange);
+
       const { data: classes, error } = await supabase
         .from('classes')
         .select(`
           id,
           name,
-          class_enrollments (count),
-          class_sessions (
+          course_code,
+          class_enrollments!inner (
+            student_id
+          ),
+          class_sessions!inner (
             id,
-            attendance_records (count)
+            start_time,
+            attendance_records (
+              id,
+              student_id
+            )
           )
         `)
         .eq('lecturer_id', authState.user?.id);
 
       if (error) {
         console.error('Error fetching class data:', error);
+        toast({
+          title: "Error fetching class data",
+          description: error.message,
+          variant: "destructive"
+        });
         return;
       }
 
-      const formattedClassData = await Promise.all(
-        classes.map(async (cls) => {
-          // Get total students in class
-          const { data: enrollments } = await supabase
-            .from('class_enrollments')
-            .select('count')
-            .eq('class_id', cls.id)
-            .single();
+      console.log('Raw class data:', classes);
 
-          // Get attendance records within date range
-          const { data: sessions } = await supabase
-            .from('class_sessions')
-            .select(`
-              id,
-              attendance_records (count)
-            `)
-            .eq('class_id', cls.id)
-            .gte('start_time', dateRange[0].toISOString())
-            .lte('end_time', dateRange[1].toISOString());
+      const formattedClassData = classes.map(cls => {
+        const totalStudents = new Set(cls.class_enrollments.map(e => e.student_id)).size;
+        
+        // Filter sessions within date range
+        const sessionsInRange = cls.class_sessions.filter(session => {
+          const sessionDate = new Date(session.start_time);
+          return sessionDate >= dateRange[0] && sessionDate <= dateRange[1];
+        });
 
-          const totalStudents = enrollments?.count || 0;
-          const totalSessions = sessions?.length || 0;
-          const totalAttendances = sessions?.reduce(
-            (acc, session) => acc + (session.attendance_records[0]?.count || 0),
-            0
-          ) || 0;
+        const totalSessions = sessionsInRange.length;
+        const totalAttendances = sessionsInRange.reduce(
+          (acc, session) => acc + (session.attendance_records?.length || 0),
+          0
+        );
 
-          const attendanceRate = totalSessions > 0 && totalStudents > 0
-            ? (totalAttendances / (totalSessions * totalStudents)) * 100
-            : 0;
+        const attendanceRate = totalSessions > 0 && totalStudents > 0
+          ? (totalAttendances / (totalSessions * totalStudents)) * 100
+          : 0;
 
-          return {
-            name: cls.name,
-            students: totalStudents,
-            attendance: Math.round(attendanceRate)
-          };
-        })
-      );
+        console.log(`Class ${cls.name} stats:`, {
+          totalStudents,
+          totalSessions,
+          totalAttendances,
+          attendanceRate
+        });
 
+        return {
+          name: `${cls.name} (${cls.course_code})`,
+          students: totalStudents,
+          attendance: Math.round(attendanceRate)
+        };
+      });
+
+      console.log('Formatted class data:', formattedClassData);
       setClassData(formattedClassData);
     } catch (error) {
       console.error('Error in fetchClassData:', error);
+      toast({
+        title: "Error processing class data",
+        description: "Please try again later",
+        variant: "destructive"
+      });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -490,28 +620,28 @@ export function Reports() {
           {
             title: 'Total Students',
             value: stats.totalStudents.toString(),
-            change: '+12%',
+            change: stats.changes.students,
             icon: Users,
             color: 'bg-blue-500',
           },
           {
             title: 'Average Attendance',
             value: `${stats.averageAttendance}%`,
-            change: '+5%',
+            change: stats.changes.attendance,
             icon: BarChart3,
             color: 'bg-green-500',
           },
           {
             title: 'Total Classes',
             value: stats.totalClasses.toString(),
-            change: '+1',
+            change: stats.changes.classes,
             icon: Clock,
             color: 'bg-purple-500',
           },
           {
             title: 'Sessions Conducted',
             value: stats.totalSessions.toString(),
-            change: '+8%',
+            change: stats.changes.sessions,
             icon: CheckCircle,
             color: 'bg-yellow-500',
           },
@@ -671,39 +801,53 @@ export function Reports() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {classData.map((cls) => (
-                <tr key={cls.name} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">
-                      {cls.name}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">
-                      {cls.students}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">
-                      {cls.attendance}%
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div
-                        className={`h-2 rounded-full ${
-                          cls.attendance >= 90
-                            ? 'bg-green-500'
-                            : cls.attendance >= 75
-                            ? 'bg-yellow-500'
-                            : 'bg-red-500'
-                        }`}
-                        style={{ width: `${cls.attendance}%` }}
-                      />
-                    </div>
+              {isLoading ? (
+                <tr>
+                  <td colSpan={4} className="px-6 py-4 text-center text-sm text-gray-500">
+                    Loading class data...
                   </td>
                 </tr>
-              ))}
+              ) : classData.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-6 py-4 text-center text-sm text-gray-500">
+                    No classes found for the selected period
+                  </td>
+                </tr>
+              ) : (
+                classData.map((cls) => (
+                  <tr key={cls.name} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">
+                        {cls.name}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">
+                        {cls.students}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">
+                        {cls.attendance}%
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className={`h-2 rounded-full ${
+                            cls.attendance >= 90
+                              ? 'bg-green-500'
+                              : cls.attendance >= 75
+                              ? 'bg-yellow-500'
+                              : 'bg-red-500'
+                          }`}
+                          style={{ width: `${cls.attendance}%` }}
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
