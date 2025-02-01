@@ -31,6 +31,76 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
   const [success, setSuccess] = useState(false);
   const { authState } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const teacherLat = parseFloat(searchParams.get('lat') || '0');
+  const teacherLng = parseFloat(searchParams.get('lng') || '0');
+
+  // Function to calculate distance between two points in meters
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371e3; // Earth's radius in meters
+    const φ1 = lat1 * Math.PI/180;
+    const φ2 = lat2 * Math.PI/180;
+    const Δφ = (lat2-lat1) * Math.PI/180;
+    const Δλ = (lon2-lon1) * Math.PI/180;
+
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+    return R * c;
+  };
+
+  // Function to verify student's location
+  const verifyLocation = async () => {
+    if (!navigator.geolocation) {
+      throw new Error('Geolocation is not supported by your browser');
+    }
+
+    if (!teacherLat || !teacherLng) {
+      throw new Error('Teacher location not found in QR code');
+    }
+
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 5000,
+          maximumAge: 0
+        });
+      });
+
+      const studentLat = position.coords.latitude;
+      const studentLng = position.coords.longitude;
+
+      const distance = calculateDistance(
+        teacherLat,
+        teacherLng,
+        studentLat,
+        studentLng
+      );
+
+      const MAX_DISTANCE = 50; // Maximum allowed distance in meters
+
+      if (distance > MAX_DISTANCE) {
+        throw new Error(`You are too far from the class location (${Math.round(distance)}m away). Must be within ${MAX_DISTANCE}m.`);
+      }
+
+      return true;
+    } catch (err) {
+      if (err instanceof GeolocationPositionError) {
+        switch (err.code) {
+          case err.PERMISSION_DENIED:
+            throw new Error('Please enable location access to mark attendance');
+          case err.POSITION_UNAVAILABLE:
+            throw new Error('Location information is unavailable');
+          case err.TIMEOUT:
+            throw new Error('Location request timed out');
+        }
+      }
+      throw err;
+    }
+  };
 
   // Log initialization props and auth state
   console.log('AttendanceForm initialized with:', {
@@ -197,6 +267,9 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
     setError(null);
 
     try {
+      // Verify location first
+      await verifyLocation();
+
       // First check if the session exists
       console.log('Checking session existence:', { sessionId });
       const { data: sessionData, error: sessionError } = await supabase

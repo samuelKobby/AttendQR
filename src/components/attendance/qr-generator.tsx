@@ -180,7 +180,7 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
 
   const getAttendanceUrl = () => {
     const baseUrl = window.location.origin;
-    return `${baseUrl}/student/attendance?session=${sessionId}&token=${qrToken}`;
+    return `${baseUrl}/student/attendance?session=${sessionId}&token=${qrToken}&lat=${location?.lat}&lng=${location?.lng}`;
   };
 
   return (
