@@ -19,33 +19,50 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
     student_name: string;
     marked_at: string;
   }>>([]);
+  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const { authState } = useAuth();
 
   const generateSession = async () => {
     try {
+      // Get current location
+      if (!navigator.geolocation) {
+        throw new Error('Geolocation is not supported by your browser');
+      }
+
+      console.log('Requesting teacher location...');
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 5000,
+          maximumAge: 0
+        });
+      });
+
+      const teacherLocation = {
+        lat: position.coords.latitude,
+        lng: position.coords.longitude
+      };
+      console.log('Teacher location obtained:', teacherLocation);
+      setLocation(teacherLocation);
+
       const startTime = new Date();
       const endTime = new Date(startTime.getTime() + sessionDuration * 60000);
       const token = crypto.randomUUID();
 
-      console.log('Generating session with:', {
-        class_id: classId,
-        lecturer_id: authState.user?.id,
-        token,
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString()
-      });
-
+      // Create the session
       const { data, error } = await supabase
         .from('class_sessions')
         .insert({
           class_id: classId,
-          lecturer_id: authState.user?.id,
-          qr_token: token,
+          lecturer_id: authState?.user?.id,
           start_time: startTime.toISOString(),
           end_time: endTime.toISOString(),
-          active: true,
+          qr_token: token,
+          latitude: teacherLocation.lat.toString(),
+          longitude: teacherLocation.lng.toString(),
+          active: true
         })
-        .select('id, qr_token, active, start_time, end_time')
+        .select()
         .single();
 
       if (error) {
@@ -53,14 +70,19 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
         throw error;
       }
 
-      console.log('Session created successfully:', {
-        data,
-        token,
-        qrToken: data.qr_token
-      });
-
+      console.log('Session created:', data);
       setSessionId(data.id);
       setQrToken(token);
+
+      // Generate QR code URL with all necessary parameters
+      const qrData = new URL(window.location.origin + '/student/attendance');
+      qrData.searchParams.set('session', data.id);
+      qrData.searchParams.set('token', token);
+      qrData.searchParams.set('lat', teacherLocation.lat.toString());
+      qrData.searchParams.set('lng', teacherLocation.lng.toString());
+      
+      console.log('QR code data:', qrData.toString());
+
       setTimeLeft(sessionDuration * 60);
 
       // Fetch attendees immediately after session creation
@@ -180,7 +202,39 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
 
   const getAttendanceUrl = () => {
     const baseUrl = window.location.origin;
-    return `${baseUrl}/student/attendance?session=${sessionId}&token=${qrToken}&lat=${location?.lat}&lng=${location?.lng}`;
+    console.log('Creating attendance URL with:', {
+      sessionId,
+      token: qrToken,
+      location
+    });
+    
+    if (!sessionId || !qrToken) {
+      console.error('Missing session or token');
+      throw new Error('Session data not available');
+    }
+
+    if (!location?.lat || !location?.lng) {
+      console.error('No valid location available for QR code');
+      throw new Error('Location not available. Please try again.');
+    }
+
+    const urlParams = {
+      session: sessionId,
+      token: qrToken,
+      lat: location.lat.toFixed(6),
+      lng: location.lng.toFixed(6)
+    };
+
+    console.log('URL parameters:', urlParams);
+
+    const searchParams = new URLSearchParams();
+    Object.entries(urlParams).forEach(([key, value]) => {
+      searchParams.append(key, value);
+    });
+
+    const finalUrl = `${baseUrl}/student/attendance?${searchParams.toString()}`;
+    console.log('Final URL:', finalUrl);
+    return finalUrl;
   };
 
   return (
@@ -203,7 +257,7 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
           </div>
 
           <div className="grid md:grid-cols-2 gap-6">
-            {qrToken && (
+            {qrToken && location ? (
               <div className="bg-white p-6 rounded-lg shadow-sm space-y-4">
                 <h3 className="text-lg font-semibold text-center">
                   Scan to Mark Attendance
@@ -223,8 +277,20 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
                   Valid for {formatTime(timeLeft)}
                 </p>
               </div>
+            ) : (
+              <div className="bg-white p-6 rounded-lg shadow-sm space-y-4">
+                <h3 className="text-lg font-semibold text-center text-yellow-600">
+                  Waiting for Location...
+                </h3>
+                <div className="flex justify-center">
+                  <div className="bg-yellow-50 p-6 rounded-lg">
+                    <p className="text-center text-sm text-yellow-700">
+                      Please allow location access to generate the attendance QR code
+                    </p>
+                  </div>
+                </div>
+              </div>
             )}
-
             <div className="bg-white p-6 rounded-lg shadow-sm">
               <h3 className="text-lg font-semibold mb-4">Present Students</h3>
               <div className="space-y-3 max-h-[300px] overflow-y-auto">

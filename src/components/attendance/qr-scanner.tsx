@@ -4,7 +4,12 @@ import { Button } from '@/components/ui/button';
 import { Camera, X } from 'lucide-react';
 
 interface QRScannerProps {
-  onScan: (data: { sessionId: string; token: string }) => void;
+  onScan: (data: { 
+    sessionId: string; 
+    token: string;
+    lat?: string;
+    lng?: string;
+  }) => void;
   onClose: () => void;
 }
 
@@ -44,28 +49,30 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
               search: url.search,
               params: Object.fromEntries(url.searchParams)
             });
-            
-            // Get session and token from URL parameters
+
             const sessionId = url.searchParams.get('session');
             const token = url.searchParams.get('token');
+            const lat = url.searchParams.get('lat');
+            const lng = url.searchParams.get('lng');
 
-            console.log('Extracted session data:', { 
-              sessionId, 
+            if (!sessionId || !token) {
+              throw new Error('Invalid QR code format: missing required parameters');
+            }
+
+            if (!lat || !lng) {
+              console.warn('QR code missing location data');
+            }
+
+            onScan({
+              sessionId,
               token,
-              hasSession: !!sessionId,
-              hasToken: !!token
+              lat,
+              lng
             });
 
-            if (sessionId && token) {
-              onScan({ sessionId, token });
-              stopScanning();
-            } else {
-              console.error('Missing required parameters in QR code:', { 
-                sessionId, 
-                token,
-                url: url.toString() 
-              });
-            }
+            // Stop scanning after successful scan
+            scannerRef.current?.stop();
+            onClose();
           } catch (error) {
             console.error('Invalid QR code format:', {
               error,

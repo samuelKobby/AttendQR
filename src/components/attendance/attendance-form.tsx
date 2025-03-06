@@ -22,18 +22,18 @@ type AttendanceFormData = z.infer<typeof attendanceSchema>;
 interface AttendanceFormProps {
   sessionId: string;
   token: string;
+  lat?: string;
+  lng?: string;
   onClose: () => void;
 }
 
-export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProps) {
+export function AttendanceForm({ sessionId, token, lat, lng, onClose }: AttendanceFormProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const { authState } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const teacherLat = parseFloat(searchParams.get('lat') || '0');
-  const teacherLng = parseFloat(searchParams.get('lng') || '0');
 
   // Function to calculate distance between two points in meters
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
@@ -51,28 +51,74 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
     return R * c;
   };
 
-  // Function to verify student's location
-  const verifyLocation = async () => {
-    if (!navigator.geolocation) {
-      throw new Error('Geolocation is not supported by your browser');
-    }
+  // Function to get current position
+  const getCurrentPosition = (): Promise<GeolocationPosition> => {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error('Geolocation is not supported by your browser'));
+        return;
+      }
 
-    if (!teacherLat || !teacherLng) {
-      throw new Error('Teacher location not found in QR code');
-    }
-
-    try {
-      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
+      navigator.geolocation.getCurrentPosition(
+        (position) => resolve(position),
+        (error) => reject(error),
+        {
           enableHighAccuracy: true,
           timeout: 5000,
           maximumAge: 0
-        });
-      });
+        }
+      );
+    });
+  };
 
+  // Function to verify student's location
+  const verifyLocation = async () => {
+    console.log('Starting location verification...');
+    console.log('Teacher location from props:', { lat, lng });
+
+    // First check if we have location in props
+    if (!lat || !lng) {
+      // If not in props, try to get from session data
+      const { data: sessionData, error: sessionError } = await supabase
+        .from('class_sessions')
+        .select('latitude, longitude')
+        .eq('id', sessionId)
+        .single();
+
+      if (sessionError || !sessionData) {
+        console.error('Failed to get location from session:', sessionError);
+        throw new Error('Teacher location not found in QR code or database');
+      }
+
+      if (!sessionData.latitude || !sessionData.longitude) {
+        console.error('Session has no location data:', sessionData);
+        throw new Error('Teacher location not found in session data');
+      }
+
+      // Use location from database
+      lat = sessionData.latitude;
+      lng = sessionData.longitude;
+      console.log('Retrieved teacher location from database:', { lat, lng });
+    }
+
+    const teacherLat = parseFloat(lat);
+    const teacherLng = parseFloat(lng);
+    
+    console.log('Parsed teacher location:', { teacherLat, teacherLng });
+
+    if (isNaN(teacherLat) || isNaN(teacherLng)) {
+      console.error('Invalid teacher location:', { teacherLat, teacherLng });
+      throw new Error('Invalid teacher location coordinates');
+    }
+
+    try {
+      const position = await getCurrentPosition();
       const studentLat = position.coords.latitude;
       const studentLng = position.coords.longitude;
+      
+      console.log('Student location:', { studentLat, studentLng });
 
+      // Calculate distance between teacher and student
       const distance = calculateDistance(
         teacherLat,
         teacherLng,
@@ -80,25 +126,21 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
         studentLng
       );
 
-      const MAX_DISTANCE = 50; // Maximum allowed distance in meters
+      console.log('Distance between teacher and student:', distance, 'meters');
+
+      // Define maximum allowed distance (e.g., 100 meters)
+      const MAX_DISTANCE = 100;
 
       if (distance > MAX_DISTANCE) {
-        throw new Error(`You are too far from the class location (${Math.round(distance)}m away). Must be within ${MAX_DISTANCE}m.`);
+        throw new Error(`You are too far from the class location. You must be within ${MAX_DISTANCE} meters to mark attendance.`);
       }
 
       return true;
-    } catch (err) {
-      if (err instanceof GeolocationPositionError) {
-        switch (err.code) {
-          case err.PERMISSION_DENIED:
-            throw new Error('Please enable location access to mark attendance');
-          case err.POSITION_UNAVAILABLE:
-            throw new Error('Location information is unavailable');
-          case err.TIMEOUT:
-            throw new Error('Location request timed out');
-        }
+    } catch (error) {
+      if (error instanceof GeolocationPositionError) {
+        throw new Error('Unable to get your location. Please enable location services and try again.');
       }
-      throw err;
+      throw error;
     }
   };
 
@@ -268,7 +310,9 @@ export function AttendanceForm({ sessionId, token, onClose }: AttendanceFormProp
 
     try {
       // Verify location first
+      console.log('Starting attendance submission...');
       await verifyLocation();
+      console.log('Location verified, proceeding with attendance...');
 
       // First check if the session exists
       console.log('Checking session existence:', { sessionId });

@@ -28,6 +28,8 @@ export function StudentAttendance() {
   const [scannedData, setScannedData] = useState<{
     sessionId: string;
     token: string;
+    lat?: string;
+    lng?: string;
   } | null>(null);
   const { authState } = useAuth();
 
@@ -69,7 +71,13 @@ export function StudentAttendance() {
     }
   };
 
-  const handleScan = (data: { sessionId: string; token: string }) => {
+  const handleScan = (data: { 
+    sessionId: string; 
+    token: string;
+    lat?: string;
+    lng?: string;
+  }) => {
+    console.log('QR scan data received:', data);
     setScannedData(data);
     setShowScanner(false);
     setShowAttendanceForm(true);
@@ -164,15 +172,16 @@ export function StudentAttendance() {
       )}
 
       {showAttendanceForm && scannedData && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center">
+          <div className="bg-white p-6 rounded-lg max-w-md w-full mx-4">
             <AttendanceForm
               sessionId={scannedData.sessionId}
               token={scannedData.token}
+              lat={scannedData.lat}
+              lng={scannedData.lng}
               onClose={() => {
                 setShowAttendanceForm(false);
                 setScannedData(null);
-                fetchTodaySessions(); // Refresh the list after marking attendance
               }}
             />
           </div>
