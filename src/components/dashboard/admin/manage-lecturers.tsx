@@ -33,6 +33,8 @@ interface Lecturer {
 export function ManageLecturers() {
   const [lecturers, setLecturers] = useState<Lecturer[]>([]);
   const [isAddingLecturer, setIsAddingLecturer] = useState(false);
+  const [editingLecturer, setEditingLecturer] = useState<Lecturer | null>(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     fetchLecturers();
@@ -40,15 +42,90 @@ export function ManageLecturers() {
 
   const fetchLecturers = async () => {
     try {
-      const { data, error } = await supabase
-        .from('lecturers')
+      setLoading(true);
+      // Fetch lecturers with their basic information
+      const { data: lecturersData, error } = await supabase
+        .from('profiles')
         .select('*')
-        .order('created_at', { ascending: false });
+        .eq('role', 'lecturer');
 
-      if (error) throw error;
-      setLecturers(data || []);
+      if (error) {
+        console.error('Error fetching lecturers:', error);
+        return;
+      }
+
+      console.log('Fetched lecturers:', lecturersData); // Debug log
+
+      // Format the data
+      const formattedLecturers = lecturersData?.map(lecturer => ({
+        id: lecturer.id,
+        email: lecturer.email,
+        name: lecturer.full_name || lecturer.email.split('@')[0],
+        department: lecturer.department || 'Not Assigned',
+        avatar_url: lecturer.avatar_url,
+        status: lecturer.status || 'active',
+        lastActive: lecturer.last_sign_in_at 
+          ? new Date(lecturer.last_sign_in_at).toLocaleDateString()
+          : 'Never',
+        classes: 0, // We'll update these counts later
+        students: 0
+      })) || [];
+
+      setLecturers(formattedLecturers);
+
+      // Now fetch class counts
+      if (formattedLecturers.length > 0) {
+        const lecturerIds = formattedLecturers.map(l => l.id);
+        const { data: classData } = await supabase
+          .from('classes')
+          .select('lecturer_id, id')
+          .in('lecturer_id', lecturerIds);
+
+        console.log('Fetched classes:', classData); // Debug log
+
+        if (classData) {
+          const updatedLecturers = formattedLecturers.map(lecturer => {
+            const lecturerClasses = classData.filter(c => c.lecturer_id === lecturer.id);
+            return {
+              ...lecturer,
+              classes: lecturerClasses.length
+            };
+          });
+          setLecturers(updatedLecturers);
+        }
+      }
     } catch (error) {
       console.error('Error fetching lecturers:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEdit = (lecturer: Lecturer) => {
+    setEditingLecturer(lecturer);
+    setIsAddingLecturer(true);
+  };
+
+  const handleDelete = async (lecturerId: string) => {
+    if (!window.confirm('Are you sure you want to delete this lecturer? This will also delete all their associated class sessions.')) return;
+    
+    try {
+      setLoading(true);
+
+      // Start a transaction to delete everything
+      const { error: txnError } = await supabase.rpc('delete_lecturer', {
+        p_lecturer_id: lecturerId
+      });
+
+      if (txnError) throw txnError;
+
+      // Update the local state to remove the deleted lecturer
+      setLecturers((prev) => prev.filter((l) => l.id !== lecturerId));
+    } catch (error) {
+      console.error('Error deleting lecturer:', error);
+      alert('Failed to delete lecturer and their class sessions. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -151,18 +228,28 @@ export function ManageLecturers() {
                   </td>
                   <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                      Active
+                      {lecturer.status === 'active' ? 'Active' : 'Inactive'}
                     </span>
                   </td>
                   <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    12
+                    {lecturer.classes}
                   </td>
                   <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div className="flex justify-end space-x-2">
-                      <Button variant="ghost" size="sm">
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={() => handleEdit(lecturer)}
+                        disabled={loading}
+                      >
                         <Pencil className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="sm">
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={() => handleDelete(lecturer.id)}
+                        disabled={loading}
+                      >
                         <Trash2 className="h-4 w-4 text-red-500" />
                       </Button>
                     </div>
@@ -193,6 +280,7 @@ export function ManageLecturers() {
           role="lecturer"
           onClose={() => setIsAddingLecturer(false)}
           onSuccess={fetchLecturers}
+          editingLecturer={editingLecturer}
         />
       )}
     </div>

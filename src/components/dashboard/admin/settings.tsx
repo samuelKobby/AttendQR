@@ -57,53 +57,293 @@ export function Settings() {
 
   const fetchSettings = async () => {
     try {
+      if (!authState.user?.id) {
+        setError('User not authenticated');
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+
       const { data, error } = await supabase
         .from('system_settings')
-        .select('key, value');
+        .select(`
+          id,
+          qr_refresh_interval,
+          qr_session_duration,
+          max_login_attempts,
+          min_password_length,
+          two_factor_auth,
+          ip_restriction,
+          login_alerts,
+          qr_alerts,
+          attendance_alerts,
+          timezone,
+          date_format,
+          auto_logout,
+          created_by,
+          created_at,
+          updated_by,
+          updated_at
+        `)
+        .eq('created_by', authState.user.id)
+        .limit(1)
+        .single();
 
-      if (error) throw error;
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // Create default settings
+          const defaultSettings = {
+            qr_refresh_interval: 5,
+            qr_session_duration: 5,
+            max_login_attempts: 3,
+            min_password_length: 8,
+            two_factor_auth: false,
+            ip_restriction: false,
+            login_alerts: true,
+            qr_alerts: true,
+            attendance_alerts: true,
+            timezone: 'UTC',
+            date_format: 'YYYY-MM-DD',
+            auto_logout: 30,
+            created_by: authState.user.id
+          };
 
-      if (data) {
-        const settingsObj = data.reduce((acc, curr) => {
-          acc[curr.key] = curr.value;
-          return acc;
-        }, {} as Settings);
+          const { error: insertError, data: newSettings } = await supabase
+            .from('system_settings')
+            .insert(defaultSettings)
+            .select()
+            .single();
 
-        setSettings(settingsObj);
+          if (insertError) {
+            console.error('Error creating settings:', insertError);
+            throw new Error('Failed to create settings');
+          }
+
+          setSettings({
+            qr_settings: {
+              refresh_interval: defaultSettings.qr_refresh_interval,
+              session_duration: defaultSettings.qr_session_duration
+            },
+            security_settings: {
+              max_login_attempts: defaultSettings.max_login_attempts,
+              min_password_length: defaultSettings.min_password_length,
+              two_factor_auth: defaultSettings.two_factor_auth,
+              ip_restriction: defaultSettings.ip_restriction
+            },
+            notification_settings: {
+              login_alerts: defaultSettings.login_alerts,
+              qr_alerts: defaultSettings.qr_alerts,
+              attendance_alerts: defaultSettings.attendance_alerts
+            },
+            system_preferences: {
+              timezone: defaultSettings.timezone,
+              date_format: defaultSettings.date_format,
+              auto_logout: defaultSettings.auto_logout
+            }
+          });
+        } else {
+          console.error('Error fetching settings:', error);
+          throw new Error('Failed to fetch settings');
+        }
+      } else if (data) {
+        setSettings({
+          qr_settings: {
+            refresh_interval: data.qr_refresh_interval,
+            session_duration: data.qr_session_duration
+          },
+          security_settings: {
+            max_login_attempts: data.max_login_attempts,
+            min_password_length: data.min_password_length,
+            two_factor_auth: data.two_factor_auth,
+            ip_restriction: data.ip_restriction
+          },
+          notification_settings: {
+            login_alerts: data.login_alerts,
+            qr_alerts: data.qr_alerts,
+            attendance_alerts: data.attendance_alerts
+          },
+          system_preferences: {
+            timezone: data.timezone,
+            date_format: data.date_format,
+            auto_logout: data.auto_logout
+          }
+        });
       }
     } catch (error) {
-      console.error('Error fetching settings:', error);
-      setError('Failed to load settings');
+      console.error('Error in fetchSettings:', error);
+      setError('Failed to load settings. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
   const handleSave = async () => {
-    if (!settings) return;
+    if (!settings || !authState.user?.id) {
+      setError('Unable to save settings: User not authenticated');
+      return;
+    }
 
     try {
       setSaving(true);
       setError(null);
       setSuccess(null);
 
-      // Update each settings category
-      for (const [key, value] of Object.entries(settings)) {
-        const { error } = await supabase.rpc('update_settings', {
-          setting_key: key,
-          setting_value: value,
-          admin_user_id: authState.user?.id
-        });
+      console.log('Saving settings:', settings);
 
-        if (error) throw error;
+      // Get existing settings first
+      const { data: existingSettings, error: fetchError } = await supabase
+        .from('system_settings')
+        .select('*')
+        .eq('created_by', authState.user.id)
+        .maybeSingle();
+
+      console.log('Existing settings:', existingSettings);
+
+      if (fetchError && fetchError.code !== 'PGRST116') {
+        console.error('Error fetching existing settings:', fetchError);
+        throw fetchError;
       }
 
-      setSuccess('Settings saved successfully');
+      const updateData = {
+        qr_refresh_interval: settings.qr_settings.refresh_interval,
+        qr_session_duration: settings.qr_settings.session_duration,
+        max_login_attempts: settings.security_settings.max_login_attempts,
+        min_password_length: settings.security_settings.min_password_length,
+        two_factor_auth: settings.security_settings.two_factor_auth,
+        ip_restriction: settings.security_settings.ip_restriction,
+        login_alerts: settings.notification_settings.login_alerts,
+        qr_alerts: settings.notification_settings.qr_alerts,
+        attendance_alerts: settings.notification_settings.attendance_alerts,
+        timezone: settings.system_preferences.timezone,
+        date_format: settings.system_preferences.date_format,
+        auto_logout: settings.system_preferences.auto_logout,
+        updated_by: authState.user.id,
+        updated_at: new Date().toISOString()
+      };
+
+      console.log('Update data:', updateData);
+
+      let savedSettings;
+
+      if (existingSettings?.id) {
+        // Update existing settings
+        console.log('Updating existing settings with ID:', existingSettings.id);
+        const { data, error } = await supabase
+          .from('system_settings')
+          .update(updateData)
+          .eq('created_by', authState.user.id)
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Error updating settings:', error);
+          throw error;
+        }
+        console.log('Settings updated successfully:', data);
+        savedSettings = data;
+      } else {
+        // Insert new settings
+        console.log('Creating new settings for user:', authState.user.id);
+        const { data, error } = await supabase
+          .from('system_settings')
+          .insert({
+            ...updateData,
+            created_by: authState.user.id,
+            created_at: new Date().toISOString()
+          })
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Error inserting settings:', error);
+          throw error;
+        }
+        console.log('Settings created successfully:', data);
+        savedSettings = data;
+      }
+
+      if (savedSettings) {
+        // Update local state with saved data
+        const newSettings = {
+          qr_settings: {
+            refresh_interval: savedSettings.qr_refresh_interval,
+            session_duration: savedSettings.qr_session_duration
+          },
+          security_settings: {
+            max_login_attempts: savedSettings.max_login_attempts,
+            min_password_length: savedSettings.min_password_length,
+            two_factor_auth: savedSettings.two_factor_auth,
+            ip_restriction: savedSettings.ip_restriction
+          },
+          notification_settings: {
+            login_alerts: savedSettings.login_alerts,
+            qr_alerts: savedSettings.qr_alerts,
+            attendance_alerts: savedSettings.attendance_alerts
+          },
+          system_preferences: {
+            timezone: savedSettings.timezone,
+            date_format: savedSettings.date_format,
+            auto_logout: savedSettings.auto_logout
+          }
+        };
+        console.log('Updating local state with:', newSettings);
+        setSettings(newSettings);
+        setSuccess('Settings saved successfully');
+      }
     } catch (error) {
-      console.error('Error saving settings:', error);
-      setError('Failed to save settings');
+      console.error('Error in handleSave:', error);
+      setError('Failed to save settings. Please try again.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleInputChange = (section: keyof Settings, field: string, value: any) => {
+    if (!settings) return;
+
+    setSettings({
+      ...settings,
+      [section]: {
+        ...settings[section],
+        [field]: value
+      }
+    });
+  };
+
+  const validateSettings = (
+    category: keyof Settings,
+    key: string,
+    value: any
+  ): { isValid: boolean; error?: string } => {
+    switch (`${category}.${key}`) {
+      case 'qr_settings.refresh_interval':
+        return {
+          isValid: value >= 1 && value <= 60,
+          error: 'Refresh interval must be between 1 and 60 minutes'
+        };
+      case 'qr_settings.session_duration':
+        return {
+          isValid: value >= 3 && value <= 10,
+          error: 'Session duration must be between 3 and 10 minutes'
+        };
+      case 'security_settings.max_login_attempts':
+        return {
+          isValid: value >= 1 && value <= 10,
+          error: 'Max login attempts must be between 1 and 10'
+        };
+      case 'security_settings.min_password_length':
+        return {
+          isValid: value >= 8 && value <= 32,
+          error: 'Password length must be between 8 and 32 characters'
+        };
+      case 'system_preferences.auto_logout':
+        return {
+          isValid: value >= 5 && value <= 120,
+          error: 'Auto logout must be between 5 and 120 minutes'
+        };
+      default:
+        return { isValid: true };
     }
   };
 
@@ -114,11 +354,17 @@ export function Settings() {
   ) => {
     if (!settings) return;
 
-    // Handle numeric inputs
-    if (typeof value === 'number' && isNaN(value)) {
-      value = 0; // Set default value for invalid numbers
+    if (typeof settings[category][key] === 'number') {
+      value = parseInt(value) || 0;
     }
 
+    const validation = validateSettings(category, key, value);
+    if (!validation.isValid) {
+      setError(validation.error || 'Invalid setting value');
+      return;
+    }
+
+    setError(null);
     setSettings({
       ...settings,
       [category]: {
@@ -149,23 +395,20 @@ export function Settings() {
           <h1 className="text-xl sm:text-2xl font-bold">System Settings</h1>
           <p className="text-sm text-gray-500">Configure system preferences and security settings</p>
         </div>
-        <Button 
-          onClick={handleSave}
-          disabled={saving}
-          className="w-full sm:w-auto"
-        >
-          {saving ? (
-            <>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Saving...
-            </>
-          ) : (
-            <>
-              <Save className="h-4 w-4 mr-2" />
-              Save Changes
-            </>
-          )}
-        </Button>
+        <div className="mt-6 flex items-center justify-end space-x-4">
+          <Button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center space-x-2"
+          >
+            {saving ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+            <span>{saving ? 'Saving...' : 'Save Changes'}</span>
+          </Button>
+        </div>
       </div>
 
       {error && (
@@ -205,20 +448,29 @@ export function Settings() {
                 max="60"
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+            <div className="space-y-2">
+              <label
+                htmlFor="sessionDuration"
+                className="block text-sm font-medium text-gray-700"
+              >
                 Session Duration (minutes)
               </label>
               <Input
+                id="sessionDuration"
                 type="number"
-                value={settings?.qr_settings.session_duration || 0}
+                min={3}
+                max={10}
+                value={settings?.qr_settings.session_duration || 5}
                 onChange={(e) => {
-                  const value = parseInt(e.target.value) || 0;
-                  updateSettings('qr_settings', 'session_duration', value);
+                  const value = parseInt(e.target.value) || 3;
+                  const validValue = Math.min(Math.max(3, value), 10);
+                  handleInputChange('qr_settings', 'session_duration', validValue);
                 }}
-                min="15"
-                max="180"
+                className="w-full"
               />
+              <p className="text-sm text-gray-500">
+                Set the duration for each attendance session (3-10 minutes)
+              </p>
             </div>
           </div>
         </div>
@@ -256,8 +508,8 @@ export function Settings() {
                   const value = parseInt(e.target.value) || 0;
                   updateSettings('security_settings', 'min_password_length', value);
                 }}
-                min="6"
-                max="20"
+                min="8"
+                max="32"
               />
             </div>
             <div className="space-y-3 pt-2">

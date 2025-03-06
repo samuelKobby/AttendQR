@@ -21,6 +21,7 @@ interface Notification {
   type: 'info' | 'warning' | 'success';
   read: boolean;
   timestamp: string;
+  user: any;
 }
 
 export function Notifications() {
@@ -51,13 +52,39 @@ export function Notifications() {
 
   const fetchNotifications = async () => {
     try {
+      setLoading(true);
+      
+      // Fetch notifications with related user data
       const { data, error } = await supabase
         .from('notifications')
-        .select('*')
-        .order('timestamp', { ascending: false });
+        .select(`
+          id,
+          title,
+          message,
+          type,
+          read,
+          created_at,
+          related_user:profiles(
+            full_name,
+            email,
+            role
+          )
+        `)
+        .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setNotifications(data || []);
+
+      const formattedNotifications = data?.map(notification => ({
+        id: notification.id,
+        title: notification.title,
+        message: enrichNotificationMessage(notification.message, notification.related_user),
+        type: notification.type,
+        read: notification.read,
+        timestamp: notification.created_at,
+        user: notification.related_user
+      })) || [];
+
+      setNotifications(formattedNotifications);
     } catch (error) {
       console.error('Error fetching notifications:', error);
     } finally {
@@ -65,15 +92,53 @@ export function Notifications() {
     }
   };
 
+  const enrichNotificationMessage = (message: string, user: any) => {
+    if (!user) return message;
+    
+    // Replace placeholders with actual user data
+    return message
+      .replace('{user}', user.full_name || user.email)
+      .replace('{role}', user.role)
+      .replace('{email}', user.email);
+  };
+
+  const createSystemNotification = async (type: 'info' | 'warning' | 'success', title: string, message: string, userId?: string) => {
+    try {
+      const { error } = await supabase
+        .from('notifications')
+        .insert({
+          type,
+          title,
+          message,
+          related_user_id: userId,
+          read: false,
+          created_at: new Date().toISOString()
+        });
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error creating notification:', error);
+    }
+  };
+
   const markAsRead = async (id: string) => {
     try {
       const { error } = await supabase
         .from('notifications')
-        .update({ read: true })
+        .update({ 
+          read: true,
+          updated_at: new Date().toISOString()
+        })
         .eq('id', id);
 
       if (error) throw error;
-      fetchNotifications();
+      
+      // Update local state
+      setNotifications(prev => 
+        prev.map(notif => 
+          notif.id === id ? { ...notif, read: true } : notif
+        )
+      );
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }
@@ -87,7 +152,9 @@ export function Notifications() {
         .eq('id', id);
 
       if (error) throw error;
-      fetchNotifications();
+      
+      // Update local state
+      setNotifications(prev => prev.filter(notif => notif.id !== id));
     } catch (error) {
       console.error('Error deleting notification:', error);
     }
@@ -97,11 +164,18 @@ export function Notifications() {
     try {
       const { error } = await supabase
         .from('notifications')
-        .update({ read: true })
+        .update({ 
+          read: true,
+          updated_at: new Date().toISOString()
+        })
         .eq('read', false);
 
       if (error) throw error;
-      fetchNotifications();
+      
+      // Update local state
+      setNotifications(prev => 
+        prev.map(notif => ({ ...notif, read: true }))
+      );
     } catch (error) {
       console.error('Error marking all notifications as read:', error);
     }

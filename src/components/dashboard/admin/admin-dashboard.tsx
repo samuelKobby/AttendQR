@@ -107,31 +107,45 @@ export function AdminDashboard() {
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
-      // Get lecturer and student stats
-      const [lecturerStats, studentStats] = await Promise.all([
-        supabase.rpc('get_lecturers_with_stats'),
-        supabase.rpc('get_students_with_stats'),
+      
+      // Get lecturer and student counts
+      const [{ count: lecturerCount }, { count: studentCount }] = await Promise.all([
+        supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'lecturer'),
+        supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'student')
       ]);
 
-      // Get classes and active sessions
-      const [classes, sessions] = await Promise.all([
-        supabase.from('classes').select('id'),
+      // Get classes count and active sessions
+      const [{ count: classCount }, { data: activeSessions }] = await Promise.all([
+        supabase.from('classes').select('*', { count: 'exact', head: true }),
         supabase
           .from('class_sessions')
-          .select('id')
+          .select('*')
           .eq('active', true)
-          .gte('end_time', new Date().toISOString()),
+          .gte('end_time', new Date().toISOString())
       ]);
 
-      // Get attendance stats
-      const { data: attendanceStats } = await supabase.rpc('get_attendance_stats');
+      // Calculate average attendance for the past month
+      const monthStart = startOfMonth(new Date()).toISOString();
+      const { data: attendanceData } = await supabase
+        .from('attendance_records')
+        .select(`
+          id,
+          class_sessions!inner(
+            total_students
+          )
+        `)
+        .gte('marked_at', monthStart);
+
+      const averageAttendance = attendanceData && attendanceData.length > 0
+        ? Math.round((attendanceData.length / attendanceData.reduce((sum, record) => sum + record.class_sessions.total_students, 0)) * 100)
+        : 0;
 
       setStats({
-        lecturers: lecturerStats.data?.length || 0,
-        students: studentStats.data?.length || 0,
-        classes: classes.data?.length || 0,
-        activeSessions: sessions.data?.length || 0,
-        averageAttendance: Math.round(attendanceStats?.[0]?.average_attendance || 0),
+        lecturers: lecturerCount || 0,
+        students: studentCount || 0,
+        classes: classCount || 0,
+        activeSessions: activeSessions?.length || 0,
+        averageAttendance
       });
 
       // Fetch recent activity with filters
@@ -207,48 +221,30 @@ export function AdminDashboard() {
 
   const fetchAttendanceData = async () => {
     try {
-      const months = Array.from({ length: 6 }, (_, i) => {
-        const date = subMonths(new Date(), i);
-        return {
-          start: startOfMonth(date).toISOString(),
-          end: endOfMonth(date).toISOString(),
-          month: format(date, 'MMM'),
-        };
-      }).reverse();
+      // Get attendance data for the past 7 days
+      const endDate = new Date();
+      const startDate = subDays(endDate, 7);
+      
+      const { data: sessions } = await supabase
+        .from('class_sessions')
+        .select(`
+          id,
+          date,
+          total_students,
+          attendance_records(count)
+        `)
+        .gte('date', startDate.toISOString())
+        .lte('date', endDate.toISOString());
 
-      const attendanceByMonth = await Promise.all(
-        months.map(async ({ start, end, month }) => {
-          const { data: sessions } = await supabase
-            .from('class_sessions')
-            .select(`
-              id,
-              attendance_records (count),
-              classes!inner (
-                class_enrollments (count)
-              )
-            `)
-            .gte('start_time', start)
-            .lte('end_time', end);
+      if (sessions) {
+        const chartData = sessions.map(session => ({
+          date: format(new Date(session.date), 'MMM dd'),
+          attendance: session.attendance_records.length,
+          total: session.total_students
+        }));
 
-          const totalSessions = sessions?.length || 0;
-          const totalEnrollments = sessions?.reduce(
-            (acc, session) => acc + (session.classes.class_enrollments[0]?.count || 0),
-            0
-          ) || 0;
-          const totalAttendances = sessions?.reduce(
-            (acc, session) => acc + (session.attendance_records[0]?.count || 0),
-            0
-          ) || 0;
-
-          return {
-            date: month,
-            attendance: totalAttendances,
-            total: totalEnrollments,
-          };
-        })
-      );
-
-      setAttendanceData(attendanceByMonth);
+        setAttendanceData(chartData);
+      }
     } catch (error) {
       console.error('Error fetching attendance data:', error);
     }

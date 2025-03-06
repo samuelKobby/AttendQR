@@ -5,13 +5,13 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth-context';
 import { Clock, Users, CheckCircle } from 'lucide-react';
 import { format } from 'date-fns';
+import { useSystemSettings } from '@/hooks/use-system-settings';
 
 interface QRGeneratorProps {
   classId: string;
-  sessionDuration?: number; // in minutes
 }
 
-export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps) {
+export function QRGenerator({ classId }: QRGeneratorProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [qrToken, setQrToken] = useState<string | null>(null);
   const [timeLeft, setTimeLeft] = useState<number>(0);
@@ -21,9 +21,14 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
   }>>([]);
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const { authState } = useAuth();
+  const { settings, loading: settingsLoading } = useSystemSettings();
 
   const generateSession = async () => {
     try {
+      if (!settings) {
+        throw new Error('System settings not loaded');
+      }
+
       // Get current location
       if (!navigator.geolocation) {
         throw new Error('Geolocation is not supported by your browser');
@@ -46,6 +51,7 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
       setLocation(teacherLocation);
 
       const startTime = new Date();
+      const sessionDuration = settings.qr_session_duration;
       const endTime = new Date(startTime.getTime() + sessionDuration * 60000);
       const token = crypto.randomUUID();
 
@@ -60,7 +66,8 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
           qr_token: token,
           latitude: teacherLocation.lat.toString(),
           longitude: teacherLocation.lng.toString(),
-          active: true
+          active: true,
+          duration_minutes: sessionDuration
         })
         .select()
         .single();
@@ -73,6 +80,7 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
       console.log('Session created:', data);
       setSessionId(data.id);
       setQrToken(token);
+      setTimeLeft(sessionDuration * 60);
 
       // Generate QR code URL with all necessary parameters
       const qrData = new URL(window.location.origin + '/student/attendance');
@@ -82,8 +90,6 @@ export function QRGenerator({ classId, sessionDuration = 15 }: QRGeneratorProps)
       qrData.searchParams.set('lng', teacherLocation.lng.toString());
       
       console.log('QR code data:', qrData.toString());
-
-      setTimeLeft(sessionDuration * 60);
 
       // Fetch attendees immediately after session creation
       await fetchAttendees();

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   BarChart3,
   Download,
@@ -26,33 +26,173 @@ import {
   Pie,
   Cell,
 } from 'recharts';
+import { supabase } from '@/lib/supabase';
+import { format, subMonths, startOfMonth, endOfMonth } from 'date-fns';
 
-const attendanceData = [
-  { month: 'Jan', attendance: 85 },
-  { month: 'Feb', attendance: 88 },
-  { month: 'Mar', attendance: 82 },
-  { month: 'Apr', attendance: 89 },
-  { month: 'May', attendance: 90 },
-  { month: 'Jun', attendance: 85 },
-];
+interface AttendanceData {
+  month: string;
+  attendance: number;
+}
 
-const classData = [
-  { name: 'Computer Science', students: 120, attendance: 85 },
-  { name: 'Mathematics', students: 90, attendance: 78 },
-  { name: 'Physics', students: 75, attendance: 92 },
-  { name: 'Chemistry', students: 85, attendance: 88 },
-  { name: 'Biology', students: 95, attendance: 83 },
-];
+interface ClassData {
+  name: string;
+  students: number;
+  attendance: number;
+}
 
-const pieData = [
-  { name: 'Present', value: 85, color: '#22c55e' },
-  { name: 'Late', value: 10, color: '#eab308' },
-  { name: 'Absent', value: 5, color: '#ef4444' },
-];
+interface DistributionData {
+  name: string;
+  value: number;
+  color: string;
+}
+
+interface DashboardStats {
+  totalStudents: number;
+  averageAttendance: number;
+  activeClasses: number;
+  totalSessions: number;
+  studentGrowth: number;
+  attendanceGrowth: number;
+  classGrowth: number;
+  sessionGrowth: number;
+}
 
 export function Reports() {
   const [selectedPeriod, setSelectedPeriod] = useState('This Month');
   const [selectedClass, setSelectedClass] = useState('All Classes');
+  const [attendanceData, setAttendanceData] = useState<AttendanceData[]>([]);
+  const [classData, setClassData] = useState<ClassData[]>([]);
+  const [distributionData, setDistributionData] = useState<DistributionData[]>([]);
+  const [stats, setStats] = useState<DashboardStats>({
+    totalStudents: 0,
+    averageAttendance: 0,
+    activeClasses: 0,
+    totalSessions: 0,
+    studentGrowth: 0,
+    attendanceGrowth: 0,
+    classGrowth: 0,
+    sessionGrowth: 0
+  });
+
+  useEffect(() => {
+    fetchReportData();
+  }, [selectedPeriod, selectedClass]);
+
+  const fetchReportData = async () => {
+    try {
+      // Get total students and growth
+      const [{ count: currentStudents }, { count: lastMonthStudents }] = await Promise.all([
+        supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'student'),
+        supabase
+          .from('profiles')
+          .select('*', { count: 'exact', head: true })
+          .eq('role', 'student')
+          .lt('created_at', startOfMonth(new Date()).toISOString())
+      ]);
+
+      // Get active classes and sessions
+      const [{ count: activeClasses }, { count: totalSessions }] = await Promise.all([
+        supabase.from('classes').select('*', { count: 'exact', head: true }).eq('active', true),
+        supabase.from('class_sessions').select('*', { count: 'exact', head: true })
+      ]);
+
+      // Get attendance data for the past 6 months
+      const months = Array.from({ length: 6 }, (_, i) => {
+        const date = subMonths(new Date(), i);
+        return {
+          start: startOfMonth(date).toISOString(),
+          end: endOfMonth(date).toISOString(),
+          month: format(date, 'MMM')
+        };
+      }).reverse();
+
+      const monthlyAttendance = await Promise.all(
+        months.map(async ({ start, end, month }) => {
+          const { data: sessions } = await supabase
+            .from('class_sessions')
+            .select('id, attendance_records(count)')
+            .gte('date', start)
+            .lte('date', end);
+
+          const totalSessions = sessions?.length || 0;
+          const totalAttendance = sessions?.reduce(
+            (sum, session) => sum + (session.attendance_records[0]?.count || 0),
+            0
+          ) || 0;
+
+          return {
+            month,
+            attendance: totalSessions > 0 ? Math.round((totalAttendance / totalSessions) * 100) : 0
+          };
+        })
+      );
+
+      // Get class-wise attendance
+      const { data: classes } = await supabase
+        .from('classes')
+        .select(`
+          name,
+          class_enrollments(count),
+          class_sessions(
+            attendance_records(count)
+          )
+        `)
+        .eq('active', true)
+        .limit(5);
+
+      const classStats = classes?.map(cls => ({
+        name: cls.name,
+        students: cls.class_enrollments[0]?.count || 0,
+        attendance: cls.class_sessions.reduce((sum, session) => 
+          sum + (session.attendance_records[0]?.count || 0), 0
+        )
+      })) || [];
+
+      // Calculate attendance distribution
+      const { data: recentSessions } = await supabase
+        .from('class_sessions')
+        .select('attendance_records(status)')
+        .gte('date', startOfMonth(new Date()).toISOString());
+
+      const distribution = {
+        present: 0,
+        late: 0,
+        absent: 0
+      };
+
+      recentSessions?.forEach(session => {
+        session.attendance_records.forEach((record: any) => {
+          if (record.status === 'present') distribution.present++;
+          else if (record.status === 'late') distribution.late++;
+          else distribution.absent++;
+        });
+      });
+
+      const total = distribution.present + distribution.late + distribution.absent;
+      
+      setStats({
+        totalStudents: currentStudents || 0,
+        averageAttendance: monthlyAttendance[monthlyAttendance.length - 1]?.attendance || 0,
+        activeClasses: activeClasses || 0,
+        totalSessions: totalSessions || 0,
+        studentGrowth: lastMonthStudents ? ((currentStudents - lastMonthStudents) / lastMonthStudents) * 100 : 0,
+        attendanceGrowth: 0, // Calculate based on previous month
+        classGrowth: 0, // Calculate based on previous month
+        sessionGrowth: 0 // Calculate based on previous month
+      });
+
+      setAttendanceData(monthlyAttendance);
+      setClassData(classStats);
+      setDistributionData([
+        { name: 'Present', value: (distribution.present / total) * 100, color: '#22c55e' },
+        { name: 'Late', value: (distribution.late / total) * 100, color: '#eab308' },
+        { name: 'Absent', value: (distribution.absent / total) * 100, color: '#ef4444' }
+      ]);
+
+    } catch (error) {
+      console.error('Error fetching report data:', error);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -86,29 +226,29 @@ export function Reports() {
         {[
           {
             title: 'Total Students',
-            value: '1,234',
-            change: '+12%',
+            value: stats.totalStudents.toString(),
+            change: `${stats.studentGrowth}%`,
             icon: Users,
             color: 'bg-blue-500',
           },
           {
             title: 'Average Attendance',
-            value: '85%',
-            change: '+5%',
+            value: `${stats.averageAttendance}%`,
+            change: `${stats.attendanceGrowth}%`,
             icon: BarChart3,
             color: 'bg-green-500',
           },
           {
             title: 'Active Classes',
-            value: '45',
-            change: '+3%',
+            value: stats.activeClasses.toString(),
+            change: `${stats.classGrowth}%`,
             icon: BookOpen,
             color: 'bg-purple-500',
           },
           {
             title: 'Total Sessions',
-            value: '289',
-            change: '+8%',
+            value: stats.totalSessions.toString(),
+            change: `${stats.sessionGrowth}%`,
             icon: Clock,
             color: 'bg-yellow-500',
           },
@@ -186,7 +326,7 @@ export function Reports() {
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={pieData}
+                  data={distributionData}
                   cx="50%"
                   cy="50%"
                   innerRadius={60}
@@ -194,7 +334,7 @@ export function Reports() {
                   paddingAngle={5}
                   dataKey="value"
                 >
-                  {pieData.map((entry, index) => (
+                  {distributionData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
                 </Pie>
