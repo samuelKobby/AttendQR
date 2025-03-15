@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth-context';
 import { format, parseISO } from 'date-fns';
 import { Button } from '@/components/ui/button';
+import { StudentAvatar } from '@/components/ui/student-avatar';
 
 interface Notification {
   id: string;
@@ -88,9 +89,12 @@ export function StudentNotifications() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold">Notifications</h1>
-          <p className="text-sm text-gray-500">Stay updated with your attendance and classes</p>
+        <div className="flex items-center space-x-4">
+          <StudentAvatar name={authState.user?.full_name || ''} size="lg" />
+          <div>
+            <h1 className="text-xl sm:text-2xl font-bold">Notifications</h1>
+            <p className="text-sm text-gray-500">Stay updated with your attendance and classes</p>
+          </div>
         </div>
         <div className="relative">
           <Button variant="outline" size="sm" className="text-xs sm:text-sm">

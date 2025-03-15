@@ -23,6 +23,7 @@ import { QRScanner } from '@/components/attendance/qr-scanner';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth-context';
 import { format, parseISO, isToday, isThisWeek } from 'date-fns';
+import { StudentAvatar } from '@/components/ui/student-avatar';
 import {
   BarChart,
   Bar,
@@ -37,7 +38,7 @@ interface AttendanceRecord {
   id: string;
   date: string;
   class_name: string;
-  status: 'present' | 'late' | 'absent';
+  status: 'present' | 'absent';
   marked_at?: string;
 }
 
@@ -74,7 +75,6 @@ export function StudentDashboard() {
     totalClasses: 0,
     averageAttendance: 0,
     presentCount: 0,
-    lateCount: 0,
     absentCount: 0,
   });
   const [upcomingClasses, setUpcomingClasses] = useState<Class[]>([]);
@@ -85,7 +85,7 @@ export function StudentDashboard() {
   const [filter, setFilter] = useState({
     startDate: '',
     endDate: '',
-    status: 'all' as 'all' | 'present' | 'late' | 'absent',
+    status: 'all' as 'all' | 'present' | 'absent',
   });
   const { authState } = useAuth();
 
@@ -118,12 +118,7 @@ export function StudentDashboard() {
           data.map((record) => {
             const sessionStart = new Date(record.class_sessions.start_time);
             const markedTime = record.marked_at ? new Date(record.marked_at) : null;
-            let status: 'present' | 'late' | 'absent' = 'absent';
-
-            if (markedTime) {
-              const timeDiff = markedTime.getTime() - sessionStart.getTime();
-              status = timeDiff <= 15 * 60 * 1000 ? 'present' : 'late';
-            }
+            const status = markedTime ? 'present' : 'absent';
 
             return {
               id: record.id,
@@ -201,87 +196,35 @@ export function StudentDashboard() {
 
   const fetchStats = async () => {
     try {
-      // Get enrolled classes first
-      const { data: enrollments } = await supabase
-        .from('class_enrollments')
-        .select('class_id')
-        .eq('student_id', authState.user?.id);
-
-      if (!enrollments || enrollments.length === 0) {
-        setStats({
-          totalClasses: 0,
-          averageAttendance: 0,
-          presentCount: 0,
-          lateCount: 0,
-          absentCount: 0,
-        });
-        return;
-      }
-
-      const classIds = enrollments.map((e) => e.class_id);
-
-      // Get sessions for enrolled classes
       const { data: sessions } = await supabase
         .from('class_sessions')
         .select(`
           id,
           start_time,
-          attendance_records!inner (
+          attendance_records!left (
             id,
-            marked_at,
             student_id
           )
         `)
-        .in('class_id', classIds)
-        .lte('start_time', new Date().toISOString()) // Only count past sessions
-        .order('start_time', { ascending: false });
+        .lte('start_time', new Date().toISOString());
 
-      if (!sessions) {
-        throw new Error('Failed to fetch sessions');
+      if (sessions) {
+        const totalClasses = sessions.length;
+        const presentCount = sessions.filter((session) =>
+          session.attendance_records.some((record) => record.student_id === authState.user?.id)
+        ).length;
+        const absentCount = totalClasses - presentCount;
+        const averageAttendance = totalClasses > 0 ? (presentCount / totalClasses) * 100 : 0;
+
+        setStats({
+          totalClasses,
+          averageAttendance,
+          presentCount,
+          absentCount,
+        });
       }
-
-      let present = 0;
-      let late = 0;
-      let absent = 0;
-
-      sessions.forEach((session) => {
-        const record = session.attendance_records.find(
-          (r) => r.student_id === authState.user?.id
-        );
-
-        if (!record) {
-          absent++;
-        } else {
-          const sessionStart = new Date(session.start_time);
-          const markedTime = new Date(record.marked_at);
-          const timeDiff = markedTime.getTime() - sessionStart.getTime();
-
-          if (timeDiff <= 15 * 60 * 1000) {
-            present++;
-          } else {
-            late++;
-          }
-        }
-      });
-
-      const total = present + late + absent;
-      setStats({
-        totalClasses: total,
-        averageAttendance: total > 0 ? ((present + late) / total) * 100 : 0,
-        presentCount: present,
-        lateCount: late,
-        absentCount: absent,
-      });
     } catch (error) {
       console.error('Error fetching stats:', error);
-      // Set default values on error
-      setStats({
-        totalClasses: 0,
-        averageAttendance: 0,
-        presentCount: 0,
-        lateCount: 0,
-        absentCount: 0,
-      });
     }
   };
 
@@ -345,7 +288,7 @@ export function StudentDashboard() {
           course_code: record.class_sessions.classes.course_code,
           date: dateStr,
           time: timeStr,
-          status: isOnTime ? 'Present' : 'Late',
+          status: isOnTime ? 'Present' : 'Absent',
         };
       });
 
@@ -439,7 +382,7 @@ export function StudentDashboard() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="h-full overflow-auto space-y-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold">Student Dashboard</h1>
@@ -533,18 +476,12 @@ export function StudentDashboard() {
                 style={{ width: `${stats.averageAttendance}%` }}
               />
             </div>
-            <div className="grid grid-cols-3 gap-2 text-center text-xs sm:text-sm">
+            <div className="grid grid-cols-2 gap-4 text-center text-xs sm:text-sm">
               <div className="bg-green-50 p-2 rounded">
                 <div className="font-medium text-green-600">
                   {stats.presentCount}
                 </div>
                 <div className="text-green-600">Present</div>
-              </div>
-              <div className="bg-yellow-50 p-2 rounded">
-                <div className="font-medium text-yellow-600">
-                  {stats.lateCount}
-                </div>
-                <div className="text-yellow-600">Late</div>
               </div>
               <div className="bg-red-50 p-2 rounded">
                 <div className="font-medium text-red-600">
@@ -616,8 +553,6 @@ export function StudentDashboard() {
                 <div className="flex items-center space-x-3 w-full sm:w-auto">
                   {record.status === 'present' ? (
                     <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5 text-green-500 flex-shrink-0" />
-                  ) : record.status === 'late' ? (
-                    <Clock className="h-4 w-4 sm:h-5 sm:w-5 text-yellow-500 flex-shrink-0" />
                   ) : (
                     <XCircle className="h-4 w-4 sm:h-5 sm:w-5 text-red-500 flex-shrink-0" />
                   )}
@@ -634,8 +569,6 @@ export function StudentDashboard() {
                   className={`px-2 py-0.5 sm:px-2 sm:py-1 text-xs sm:text-sm rounded-full ${
                     record.status === 'present'
                       ? 'bg-green-100 text-green-800'
-                      : record.status === 'late'
-                      ? 'bg-yellow-100 text-yellow-800'
                       : 'bg-red-100 text-red-800'
                   }`}
                 >
@@ -684,7 +617,7 @@ export function StudentDashboard() {
         </div>
       </div>
 
-      
+      {/* ... */}
 
       {showScanner && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
@@ -906,14 +839,13 @@ export function StudentDashboard() {
                   onChange={(e) =>
                     setFilter((prev) => ({
                       ...prev,
-                      status: e.target.value as 'all' | 'present' | 'late' | 'absent',
+                      status: e.target.value as 'all' | 'present' | 'absent',
                     }))
                   }
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 >
                   <option value="all">All</option>
                   <option value="present">Present</option>
-                  <option value="late">Late</option>
                   <option value="absent">Absent</option>
                 </select>
               </div>

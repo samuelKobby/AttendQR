@@ -77,10 +77,10 @@ function AppContent() {
   }
 
   return (
-    <div className="flex min-h-screen bg-gray-100">
+    <div className="flex h-screen overflow-hidden bg-gray-100">
       <Sidebar role="student" />
       <main className="flex-1 overflow-y-auto">
-        <div className="pt-16 lg:pt-8 px-4 lg:px-8 pb-8">
+        <div className="p-8">
           <Routes>
             <Route path="/student" element={<StudentDashboard />} />
             <Route path="/student/attendance" element={<StudentAttendance />} />

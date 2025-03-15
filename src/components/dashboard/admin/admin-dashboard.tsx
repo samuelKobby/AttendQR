@@ -319,22 +319,8 @@ export function AdminDashboard() {
           </p>
         </div>
         <div className="flex items-center space-x-4">
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={() => navigate('/admin/notifications')}
-          >
-            <Bell className="h-4 w-4 mr-2" />
-            Notifications
-          </Button>
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={() => navigate('/admin/settings')}
-          >
-            <Settings className="h-4 w-4 mr-2" />
-            Settings
-          </Button>
+          <Bell className="h-4 w-4 mr-2" 
+            onClick={() => navigate('/admin/notifications')} />
         </div>
       </div>
 
@@ -414,11 +400,11 @@ export function AdminDashboard() {
                 Filter
               </Button>
               <Button variant="outline" size="sm" onClick={handleExport}>
-                <Download className="h-4 w-4 mr-2" />
+                <Upload className="h-4 w-4 mr-2" />
                 Export
               </Button>
               <Button variant="outline" size="sm" onClick={() => setShowImport(true)}>
-                <Upload className="h-4 w-4 mr-2" />
+                <Download className="h-4 w-4 mr-2" />
                 Import
               </Button>
             </div>

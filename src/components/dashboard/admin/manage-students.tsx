@@ -1,24 +1,18 @@
 import { useState, useEffect } from 'react';
 import {
-  Users,
   Search,
   Plus,
-  Edit,
   Trash2,
-  Mail,
-  BookOpen,
-  Lock,
   CheckCircle,
   XCircle,
-  Download,
-  Filter,
-  Upload,
   Pencil,
+  Users,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AddUserForm } from '@/components/forms/add-user-form';
+import { StudentAvatar } from '@/components/ui/student-avatar';
 
 interface Student {
   id: string;
@@ -36,6 +30,8 @@ export function ManageStudents() {
   const [isAddingStudent, setIsAddingStudent] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
 
   useEffect(() => {
     fetchStudents();
@@ -55,8 +51,6 @@ export function ManageStudents() {
         return;
       }
 
-      console.log('Fetched students:', studentsData); // Debug log
-
       // Format the data with basic information first
       const formattedStudents = studentsData?.map(student => ({
         id: student.id,
@@ -65,7 +59,10 @@ export function ManageStudents() {
         studentId: student.student_id || 'N/A',
         classes: 0,
         attendance: 0,
-        status: student.status || 'active',
+        // Ensure status is strictly typed as 'active' | 'inactive'
+        status: (student.status === 'active' || student.status === 'inactive') 
+          ? student.status 
+          : 'inactive',
         lastActive: student.last_sign_in_at 
           ? new Date(student.last_sign_in_at).toLocaleDateString()
           : 'Never'
@@ -89,8 +86,6 @@ export function ManageStudents() {
           return;
         }
 
-        console.log('Fetched enrollments:', enrollmentsData);
-
         // Get attendance records for these students
         const { data: attendanceData, error: attendanceError } = await supabase
           .from('attendance_records')
@@ -101,8 +96,6 @@ export function ManageStudents() {
           console.error('Error fetching attendance:', attendanceError);
           return;
         }
-
-        console.log('Fetched attendance:', attendanceData);
 
         // Update students with enrollment and attendance data
         const updatedStudents = formattedStudents.map(student => {
@@ -116,10 +109,18 @@ export function ManageStudents() {
             ? Math.round((presentRecords / totalAttendanceRecords) * 100) 
             : 0;
 
+          // Update status to inactive if no recent activity (30 days)
+          const lastActive = new Date(student.lastActive);
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+          
+          const newStatus = lastActive < thirtyDaysAgo ? 'inactive' as const : 'active' as const;
+
           return {
             ...student,
             classes: studentEnrollments.length,
-            attendance: attendancePercentage
+            attendance: attendancePercentage,
+            status: newStatus
           };
         });
 
@@ -160,6 +161,46 @@ export function ManageStudents() {
     }
   };
 
+  const handleStatusChange = async (studentId: string, newStatus: 'active' | 'inactive') => {
+    try {
+      setLoading(true);
+      
+      // Update the status in the database
+      const { error } = await supabase
+        .from('profiles')
+        .update({ status: newStatus })
+        .eq('id', studentId);
+
+      if (error) throw error;
+
+      // Update local state
+      setStudents(prev => 
+        prev.map(student => 
+          student.id === studentId 
+            ? { ...student, status: newStatus }
+            : student
+        )
+      );
+    } catch (error) {
+      console.error('Error updating student status:', error);
+      alert('Failed to update student status. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Filter students based on search term and status
+  const filteredStudents = students.filter(student => {
+    const matchesSearch = 
+      student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      student.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      student.studentId.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesStatus = statusFilter === 'all' || student.status === statusFilter;
+    
+    return matchesSearch && matchesStatus;
+  });
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -186,30 +227,19 @@ export function ManageStudents() {
               type="text"
               placeholder="Search students..."
               className="w-full pl-10 pr-4 py-2 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
           <div>
-            <select className="w-full rounded-md border border-gray-300 py-2 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option>All Programs</option>
-              <option>Computer Science</option>
-              <option>Engineering</option>
-              <option>Business</option>
-            </select>
-          </div>
-          <div>
-            <select className="w-full rounded-md border border-gray-300 py-2 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option>All Years</option>
-              <option>Year 1</option>
-              <option>Year 2</option>
-              <option>Year 3</option>
-              <option>Year 4</option>
-            </select>
-          </div>
-          <div>
-            <select className="w-full rounded-md border border-gray-300 py-2 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option>All Status</option>
-              <option>Active</option>
-              <option>Inactive</option>
+            <select 
+              className="w-full rounded-md border border-gray-300 py-2 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}
+            >
+              <option value="all">All Status</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
             </select>
           </div>
         </div>
@@ -238,7 +268,7 @@ export function ManageStudents() {
               <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Last Active
               </th>
-              <th className="px-4 sm:px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-4 sm:px-6 py-3 text-right text-xs font-medium">
                 Actions
               </th>
             </tr>
@@ -246,11 +276,11 @@ export function ManageStudents() {
           <tbody className="bg-white divide-y divide-gray-200">
             {loading ? (
               <tr>
-                <td colSpan={7} className="text-center">
+                <td colSpan={7} className="text-center py-4">
                   Loading students...
                 </td>
               </tr>
-            ) : students.length === 0 ? (
+            ) : filteredStudents.length === 0 ? (
               <tr>
                 <td colSpan={7} className="text-center">
                   <div className="flex flex-col items-center justify-center py-8">
@@ -266,10 +296,18 @@ export function ManageStudents() {
                 </td>
               </tr>
             ) : (
-              students.map((student) => (
+              filteredStudents.map((student) => (
                 <tr key={student.id}>
                   <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">{student.name}</div>
+                    <div className="flex items-center">
+                      <div className="h-10 w-10 flex-shrink-0">
+                        <StudentAvatar name={student.name} />
+                      </div>
+                      <div className="ml-4">
+                        <div className="text-sm font-medium text-gray-900">{student.name}</div>
+                        <div className="text-sm text-gray-500">{student.email}</div>
+                      </div>
+                    </div>
                   </td>
                   <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
                     <div className="text-sm text-gray-900">{student.studentId}</div>
@@ -281,12 +319,14 @@ export function ManageStudents() {
                     <div className="text-sm text-gray-900">{student.attendance}%</div>
                   </td>
                   <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
-                    <span
+                    <button
+                      onClick={() => handleStatusChange(student.id, student.status === 'active' ? 'inactive' : 'active')}
                       className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                         student.status === 'active'
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-red-100 text-red-800'
+                          ? 'bg-green-100 text-green-800 hover:bg-green-200'
+                          : 'bg-red-100 text-red-800 hover:bg-red-200'
                       }`}
+                      disabled={loading}
                     >
                       {student.status === 'active' ? (
                         <CheckCircle className="h-3 w-3 mr-1" />
@@ -294,7 +334,7 @@ export function ManageStudents() {
                         <XCircle className="h-3 w-3 mr-1" />
                       )}
                       {student.status}
-                    </span>
+                    </button>
                   </td>
                   <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
                     <div className="text-sm text-gray-500">{student.lastActive}</div>
