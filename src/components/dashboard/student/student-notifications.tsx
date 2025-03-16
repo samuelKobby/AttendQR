@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Bell, AlertCircle, CheckCircle } from 'lucide-react';
+import { Bell, AlertCircle, CheckCircle, Trash2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth-context';
 import { format, parseISO } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { StudentAvatar } from '@/components/ui/student-avatar';
+import { toast } from 'sonner';
 
 interface Notification {
   id: string;
@@ -17,6 +18,7 @@ interface Notification {
 
 export function StudentNotifications() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [selectedNotifications, setSelectedNotifications] = useState<string[]>([]);
   const { authState } = useAuth();
 
   useEffect(() => {
@@ -27,25 +29,18 @@ export function StudentNotifications() {
     if (!authState.user?.id) return;
 
     try {
-      console.log('Fetching notifications for user:', authState.user.id);
-      
       const { data, error } = await supabase
         .from('notifications')
         .select('*')
         .eq('user_id', authState.user.id)
         .order('created_at', { ascending: false })
-        .limit(5);
+        .limit(50);
 
-      if (error) {
-        console.error('Supabase query error:', error);
-        throw error;
-      }
-
-      console.log('Fetched notifications:', data);
+      if (error) throw error;
       
-      // Ensure we have valid data before setting state
       if (Array.isArray(data)) {
         setNotifications(data.filter(n => n && n.created_at));
+        setSelectedNotifications([]);
       }
     } catch (error) {
       console.error('Error fetching notifications:', error);
@@ -53,35 +48,75 @@ export function StudentNotifications() {
     }
   };
 
-  const markAsRead = async (notificationId: string) => {
-    if (!authState.user?.id) return;
+  const markAllAsRead = async () => {
+    if (!authState.user?.id || notifications.length === 0) return;
 
     try {
       const { error } = await supabase
         .from('notifications')
         .update({ read: true })
-        .eq('id', notificationId)
-        .eq('user_id', authState.user.id);
+        .eq('user_id', authState.user.id)
+        .in('id', notifications.map(n => n.id));
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error marking all notifications as read:', error);
+        toast.error('Failed to mark notifications as read');
+        return;
+      }
       
-      // Refresh notifications after marking as read
-      fetchNotifications();
+      // Update local state to mark all notifications as read
+      setNotifications(prev => 
+        prev.map(n => ({ ...n, read: true }))
+      );
+      toast.success('All notifications marked as read');
     } catch (error) {
-      console.error('Error marking notification as read:', error);
+      console.error('Error marking all notifications as read:', error);
+      toast.error('Failed to mark notifications as read');
     }
   };
 
-  const formatDate = (dateString: string | null | undefined) => {
-    if (!dateString) {
-      console.log('No date string provided');
-      return '';
-    }
+  const deleteSelectedNotifications = async () => {
+    if (!authState.user?.id || selectedNotifications.length === 0) return;
+
     try {
-      const date = parseISO(dateString);
-      return format(date, 'MMM d, HH:mm');
+      const { error } = await supabase
+        .from('notifications')
+        .delete()
+        .eq('user_id', authState.user.id)
+        .in('id', selectedNotifications);
+
+      if (error) {
+        console.error('Error deleting notifications:', error);
+        toast.error('Failed to delete notifications');
+        return;
+      }
+      
+      // Update local state to remove deleted notifications
+      setNotifications(prev => 
+        prev.filter(n => !selectedNotifications.includes(n.id))
+      );
+      setSelectedNotifications([]);
+      toast.success(`${selectedNotifications.length} notification(s) deleted`);
     } catch (error) {
-      console.error('Error formatting date:', error, 'dateString:', dateString);
+      console.error('Error deleting notifications:', error);
+      toast.error('Failed to delete notifications');
+    }
+  };
+
+  const toggleNotificationSelection = (id: string) => {
+    setSelectedNotifications(prev => 
+      prev.includes(id) 
+        ? prev.filter(nId => nId !== id)
+        : [...prev, id]
+    );
+  };
+
+  const formatDate = (dateString: string | null | undefined) => {
+    if (!dateString) return '';
+    try {
+      return format(parseISO(dateString), 'MMM d, HH:mm');
+    } catch (error) {
+      console.error('Error formatting date:', error);
       return '';
     }
   };
@@ -96,13 +131,27 @@ export function StudentNotifications() {
             <p className="text-sm text-gray-500">Stay updated with your attendance and classes</p>
           </div>
         </div>
-        <div className="relative">
-          <Button variant="outline" size="sm" className="text-xs sm:text-sm">
+        <div className="flex items-center gap-2">
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={markAllAsRead}
+            className="text-xs sm:text-sm hover:bg-blue-500/15 hover:text-blue-600 hover:border-blue-500/25"
+            disabled={notifications.length === 0 || notifications.every(n => n.read)}
+          >
             <Bell className="h-4 w-4 mr-2" />
             Mark all as read
           </Button>
-          {notifications.some((n) => !n.read) && (
-            <span className="absolute -top-1 -right-1 h-3 w-3 bg-red-500 rounded-full" />
+          {selectedNotifications.length > 0 && (
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={deleteSelectedNotifications}
+              className="text-xs sm:text-sm text-red-600 hover:bg-red-500/10 hover:text-red-700 hover:border-red-500/25"
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete ({selectedNotifications.length})
+            </Button>
           )}
         </div>
       </div>
@@ -117,27 +166,34 @@ export function StudentNotifications() {
           notifications.map((notification) => (
             <div
               key={notification.id}
-              className={`p-4 sm:p-6 hover:bg-gray-50 transition-colors ${
-                !notification.read ? 'bg-blue-50/50' : ''
-              }`}
-              onClick={() => !notification.read && markAsRead(notification.id)}
+              className={`p-4 sm:p-6 hover:bg-blue-500/15 transition-colors ${
+                !notification.read ? 'bg-blue-500/15' : ''
+              } ${selectedNotifications.includes(notification.id) ? 'bg-blue-600/25' : ''}`}
             >
               <div className="flex items-start space-x-4">
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
+                    checked={selectedNotifications.includes(notification.id)}
+                    onChange={() => toggleNotificationSelection(notification.id)}
+                    className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                  />
+                </div>
                 <div
                   className={`p-2 rounded-full ${
                     notification.type === 'warning'
-                      ? 'bg-yellow-100'
+                      ? 'bg-yellow-500/15 text-yellow-600'
                       : notification.type === 'success'
-                      ? 'bg-green-100'
-                      : 'bg-blue-100'
+                      ? 'bg-green-500/15 text-green-600'
+                      : 'bg-blue-500/15 text-blue-600'
                   }`}
                 >
                   {notification.type === 'warning' ? (
-                    <AlertCircle className="h-4 w-4 sm:h-5 sm:w-5 text-yellow-600" />
+                    <AlertCircle className="h-4 w-4 sm:h-5 sm:w-5" />
                   ) : notification.type === 'success' ? (
-                    <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5 text-green-600" />
+                    <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5" />
                   ) : (
-                    <Bell className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600" />
+                    <Bell className="h-4 w-4 sm:h-5 sm:w-5" />
                   )}
                 </div>
                 <div className="flex-1 min-w-0">

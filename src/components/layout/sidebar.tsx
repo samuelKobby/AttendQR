@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '@/contexts/auth-context';
+import { ProfileAvatar } from '@/components/ui/profile-avatar';
 import { Button } from '@/components/ui/button';
 
 const adminLinks = [
@@ -46,6 +47,7 @@ interface SidebarProps {
 export function Sidebar({ role }: SidebarProps) {
   const { logout, authState } = useAuth();
   const [isOpen, setIsOpen] = useState(true);
+  const email = authState.user?.email || '';
 
   const links = {
     admin: adminLinks,
@@ -99,10 +101,10 @@ export function Sidebar({ role }: SidebarProps) {
           </div>
 
           {/* User Info */}
-          <div className="flex-shrink-0 px-6 py-4">
-            <div className="text-sm text-gray-400">Signed in as</div>
+          <div className="flex items-center gap-3 px-6 py-4">
+            <ProfileAvatar email={email} role={role} />
             <div className="text-sm font-medium truncate">
-              {authState.user?.email}
+              {email}
             </div>
           </div>
 

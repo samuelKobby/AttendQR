@@ -277,34 +277,49 @@ export const databaseService = {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
-      // Verify ownership and lecturer role
-      const { data: existingClass, error: checkError } = await supabase
+      // First verify the class exists and user has permission
+      const { data: classCheck } = await supabase
         .from('classes')
-        .select('*, profiles!classes_lecturer_id_fkey(role)')
+        .select('id')
         .eq('id', classId)
         .eq('lecturer_id', user.id)
         .single();
 
-      if (checkError || !existingClass) {
+      if (!classCheck) {
         throw new Error('Class not found or you do not have permission to edit it');
       }
 
-      const profile = existingClass.profiles;
-      if (!profile || profile.role !== 'lecturer') {
-        throw new Error('Only lecturers can edit classes');
+      // Update the class
+      const { error: updateError } = await supabase
+        .from('classes')
+        .update({
+          name: classData.name,
+          course_code: classData.course_code,
+          location: classData.location,
+          capacity: classData.capacity,
+          schedule: classData.schedule
+        })
+        .eq('id', classId)
+        .eq('lecturer_id', user.id);
+
+      if (updateError) {
+        console.error('Update error:', updateError);
+        throw updateError;
       }
 
-      // Update the class
-      const { data, error } = await supabase
+      // Fetch the updated class data
+      const { data: updatedClass, error: fetchError } = await supabase
         .from('classes')
-        .update(classData)
+        .select('*')
         .eq('id', classId)
-        .eq('lecturer_id', user.id)
-        .select()
         .single();
 
-      if (error) throw error;
-      return data;
+      if (fetchError || !updatedClass) {
+        console.error('Fetch error:', fetchError);
+        throw new Error('Failed to fetch updated class data');
+      }
+
+      return updatedClass;
     } catch (error) {
       console.error('Error in updateClass:', error);
       throw error;

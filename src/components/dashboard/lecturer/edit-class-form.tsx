@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { databaseService } from '@/services/database';
 import { toast } from 'sonner';
@@ -16,15 +15,11 @@ interface EditClassFormProps {
 export function EditClassForm({ classData, onClose, onSuccess }: EditClassFormProps) {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
-    name: classData.name,
-    course_code: classData.course_code,
-    description: classData.description || '',
-    schedule: classData.schedule || '',
+    name: classData.name || '',
+    course_code: classData.course_code || '',
     location: classData.location || '',
-    capacity: classData.capacity || 0,
-    department: classData.department || '',
-    semester: classData.semester || '',
-    academic_year: classData.academic_year || '',
+    capacity: classData.capacity?.toString() || '0',
+    schedule: classData.schedule || ''
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -32,7 +27,17 @@ export function EditClassForm({ classData, onClose, onSuccess }: EditClassFormPr
     setLoading(true);
 
     try {
-      await databaseService.updateClass(classData.id, formData);
+      // Ensure capacity is a number
+      const updateData = {
+        name: formData.name.trim(),
+        course_code: formData.course_code.trim(),
+        location: formData.location.trim(),
+        capacity: parseInt(formData.capacity) || 0,
+        schedule: formData.schedule.trim()
+      };
+
+      console.log('Submitting update with:', updateData);
+      await databaseService.updateClass(classData.id, updateData);
       toast.success('Class updated successfully');
       onSuccess();
       onClose();
@@ -44,11 +49,11 @@ export function EditClassForm({ classData, onClose, onSuccess }: EditClassFormPr
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: name === 'capacity' ? parseInt(value) || 0 : value,
+      [name]: value
     }));
   };
 
@@ -62,6 +67,7 @@ export function EditClassForm({ classData, onClose, onSuccess }: EditClassFormPr
           value={formData.name}
           onChange={handleChange}
           required
+          placeholder="Enter class name"
         />
       </div>
 
@@ -73,88 +79,46 @@ export function EditClassForm({ classData, onClose, onSuccess }: EditClassFormPr
           value={formData.course_code}
           onChange={handleChange}
           required
+          placeholder="Enter course code"
         />
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="description">Description</Label>
-        <Textarea
-          id="description"
-          name="description"
-          value={formData.description}
+        <Label htmlFor="location">Location</Label>
+        <Input
+          id="location"
+          name="location"
+          value={formData.location}
           onChange={handleChange}
-          rows={3}
+          required
+          placeholder="Enter classroom or online link"
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="schedule">Schedule</Label>
-          <Input
-            id="schedule"
-            name="schedule"
-            value={formData.schedule}
-            onChange={handleChange}
-            placeholder="e.g., Mon/Wed 10:00-11:30"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="location">Location</Label>
-          <Input
-            id="location"
-            name="location"
-            value={formData.location}
-            onChange={handleChange}
-            placeholder="e.g., Room 101"
-          />
-        </div>
+      <div className="space-y-2">
+        <Label htmlFor="capacity">Class Capacity</Label>
+        <Input
+          id="capacity"
+          name="capacity"
+          type="number"
+          value={formData.capacity}
+          onChange={handleChange}
+          required
+          placeholder="Enter maximum number of students"
+          min="1"
+        />
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="capacity">Capacity</Label>
-          <Input
-            id="capacity"
-            name="capacity"
-            type="number"
-            value={formData.capacity}
-            onChange={handleChange}
-            min={0}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="department">Department</Label>
-          <Input
-            id="department"
-            name="department"
-            value={formData.department}
-            onChange={handleChange}
-          />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="semester">Semester</Label>
-          <Input
-            id="semester"
-            name="semester"
-            value={formData.semester}
-            onChange={handleChange}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="academic_year">Academic Year</Label>
-          <Input
-            id="academic_year"
-            name="academic_year"
-            value={formData.academic_year}
-            onChange={handleChange}
-          />
-        </div>
+      <div className="space-y-2">
+        <Label htmlFor="schedule">Schedule</Label>
+        <Input
+          id="schedule"
+          name="schedule"
+          value={formData.schedule}
+          onChange={handleChange}
+          required
+          placeholder="E.g., Mon, Wed 10:00 AM - 11:30 AM"
+        />
       </div>
 
       <div className="flex justify-end space-x-2 pt-4">
@@ -166,7 +130,11 @@ export function EditClassForm({ classData, onClose, onSuccess }: EditClassFormPr
         >
           Cancel
         </Button>
-        <Button type="submit" disabled={loading}>
+        <Button 
+          type="submit" 
+          disabled={loading}
+          className="bg-green-500 hover:bg-green-600"
+        >
           {loading ? 'Updating...' : 'Update Class'}
         </Button>
       </div>

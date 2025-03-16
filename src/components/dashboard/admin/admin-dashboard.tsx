@@ -333,6 +333,7 @@ export function AdminDashboard() {
             icon: Users,
             color: 'bg-blue-500',
             trend: '+5%',
+            progress: (stats.lecturers / 100) * 100, // 1% per lecturer
           },
           {
             label: 'Total Students',
@@ -340,6 +341,7 @@ export function AdminDashboard() {
             icon: Users,
             color: 'bg-green-500',
             trend: '+12%',
+            progress: Math.min((stats.students / 1000) * 100, 100), // Cap at 100%, 1000 students = 100%
           },
           {
             label: 'Active Classes',
@@ -347,6 +349,7 @@ export function AdminDashboard() {
             icon: BookOpen,
             color: 'bg-purple-500',
             trend: '+3%',
+            progress: (stats.classes / 50) * 100, // 50 classes = 100%
           },
           {
             label: 'Attendance Rate',
@@ -354,11 +357,12 @@ export function AdminDashboard() {
             icon: CheckCircle,
             color: 'bg-yellow-500',
             trend: '+8%',
+            progress: stats.averageAttendance,
           },
         ].map((stat) => (
           <div
             key={stat.label}
-            className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow"
+            className="bg-white rounded-lg shadow-lg transition-shadow duration-200"
           >
             <div className="p-6">
               <div className="flex items-center justify-between">
@@ -384,6 +388,18 @@ export function AdminDashboard() {
               </div>
               <h3 className="text-2xl font-bold mt-4">{stat.value}</h3>
               <p className="text-sm text-gray-500 mt-1">{stat.label}</p>
+              
+              {/* Circular Progress */}
+              <div className="mt-4 relative pt-1">
+                <div className="flex mb-2 items-center justify-between">
+                  <div className="w-full bg-gray-200 rounded-full h-2.5">
+                    <div
+                      className={`${stat.color} h-2.5 rounded-full`}
+                      style={{ width: `${Math.min(stat.progress, 100)}%` }}
+                    ></div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         ))}
@@ -391,7 +407,7 @@ export function AdminDashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Attendance Chart */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
+        <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200 p-6">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-semibold">Attendance Overview</h2>
             <div className="flex items-center space-x-2">
@@ -427,7 +443,7 @@ export function AdminDashboard() {
         </div>
 
         {/* Recent Activity */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
+        <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200 p-6">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-semibold">Recent Activity</h2>
             <div className="flex items-center space-x-2">
@@ -544,7 +560,9 @@ export function AdminDashboard() {
       </div>
 
       {/* Quick Actions */}
-      <QuickActions />
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        <QuickActions />
+      </div>
 
       {showImport && (
         <ImportCSV

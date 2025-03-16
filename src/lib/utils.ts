@@ -6,15 +6,14 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
- * Get initials from a name (up to 2 characters)
- * @param name Full name to get initials from
- * @returns Uppercase initials (max 2 characters)
+ * Get initials from an email
+ * @param email Email to get initials from
+ * @returns Uppercase initials
  */
-export function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .map(word => word[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
+export function getInitials(email: string): string {
+  return email
+    .split('@')[0]
+    .split('.')
+    .map(part => part[0]?.toUpperCase() || '')
+    .join('');
 }

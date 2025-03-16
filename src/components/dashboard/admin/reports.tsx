@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   BarChart3,
   Download,
@@ -11,6 +11,7 @@ import {
   FileText,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useToast } from '@/components/ui/use-toast';
 import {
   BarChart,
   Bar,
@@ -28,10 +29,15 @@ import {
 } from 'recharts';
 import { supabase } from '@/lib/supabase';
 import { format, subMonths, startOfMonth, endOfMonth } from 'date-fns';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 interface AttendanceData {
   month: string;
   attendance: number;
+  totalStudents: number;
+  sessions: number;
+  activeClasses: number;
 }
 
 interface ClassData {
@@ -55,6 +61,11 @@ interface DashboardStats {
   attendanceGrowth: number;
   classGrowth: number;
   sessionGrowth: number;
+  morningSessions: number;
+  afternoonSessions: number;
+  eveningSessions: number;
+  completedSessions: number;
+  upcomingSessions: number;
 }
 
 export function Reports() {
@@ -71,8 +82,134 @@ export function Reports() {
     studentGrowth: 0,
     attendanceGrowth: 0,
     classGrowth: 0,
-    sessionGrowth: 0
+    sessionGrowth: 0,
+    morningSessions: 0,
+    afternoonSessions: 0,
+    eveningSessions: 0,
+    completedSessions: 0,
+    upcomingSessions: 0
   });
+  const [isExporting, setIsExporting] = useState(false);
+
+  const chartsRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
+
+  const exportReport = async () => {
+    if (!chartsRef.current) return;
+
+    try {
+      setIsExporting(true);
+      // Create PDF
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      let yOffset = 20;
+
+      // Add title
+      pdf.setFontSize(20);
+      pdf.text('Attendance Report', pageWidth / 2, yOffset, { align: 'center' });
+      yOffset += 15;
+
+      // Add generation date
+      pdf.setFontSize(12);
+      pdf.text(`Generated on: ${format(new Date(), 'PPP')}`, pageWidth / 2, yOffset, { align: 'center' });
+      yOffset += 20;
+
+      // Add overview section
+      pdf.setFontSize(16);
+      pdf.text('Overview', 20, yOffset);
+      yOffset += 10;
+
+      pdf.setFontSize(12);
+      const overviewData = [
+        ['Total Students', stats.totalStudents.toString()],
+        ['Average Attendance', `${stats.averageAttendance}%`],
+        ['Active Classes', stats.activeClasses.toString()],
+        ['Total Sessions', stats.totalSessions.toString()],
+      ];
+
+      overviewData.forEach(([label, value]) => {
+        pdf.text(`${label}: ${value}`, 30, yOffset);
+        yOffset += 8;
+      });
+      yOffset += 10;
+
+      // Capture and add charts
+      const charts = chartsRef.current;
+      const canvas = await html2canvas(charts);
+      const imgData = canvas.toDataURL('image/png');
+      
+      // Add charts section title
+      pdf.setFontSize(16);
+      pdf.text('Analytics', 20, yOffset);
+      yOffset += 10;
+
+      // Calculate image dimensions to fit page width while maintaining aspect ratio
+      const imgWidth = pageWidth - 40; // 20mm margin on each side
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      // Add image, checking if it needs a new page
+      if (yOffset + imgHeight > pdf.internal.pageSize.getHeight() - 20) {
+        pdf.addPage();
+        yOffset = 20;
+      }
+      pdf.addImage(imgData, 'PNG', 20, yOffset, imgWidth, imgHeight);
+      yOffset += imgHeight + 20;
+
+      // Add monthly statistics table
+      if (yOffset + 60 > pdf.internal.pageSize.getHeight()) {
+        pdf.addPage();
+        yOffset = 20;
+      }
+
+      pdf.setFontSize(16);
+      pdf.text('Monthly Statistics', 20, yOffset);
+      yOffset += 10;
+
+      pdf.setFontSize(10);
+      const headers = ['Month', 'Attendance', 'Students', 'Sessions', 'Classes'];
+      const columnWidth = 35;
+      
+      // Draw table headers
+      headers.forEach((header, i) => {
+        pdf.text(header, 20 + (i * columnWidth), yOffset);
+      });
+      yOffset += 5;
+      pdf.line(20, yOffset, 20 + (headers.length * columnWidth), yOffset);
+      yOffset += 5;
+
+      // Draw table rows
+      attendanceData.forEach(data => {
+        const row = [
+          data.month,
+          `${data.attendance}%`,
+          data.totalStudents.toString(),
+          data.sessions.toString(),
+          data.activeClasses.toString(),
+        ];
+        
+        row.forEach((cell, i) => {
+          pdf.text(cell, 20 + (i * columnWidth), yOffset);
+        });
+        yOffset += 5;
+      });
+
+      // Save the PDF
+      pdf.save(`attendance_report_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+      toast({
+        title: "Report Exported Successfully",
+        description: "Your attendance report has been downloaded as a PDF.",
+      });
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      toast({
+        title: "Export Failed",
+        description: "There was an error generating your report. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   useEffect(() => {
     fetchReportData();
@@ -120,9 +257,26 @@ export function Reports() {
             0
           ) || 0;
 
+          const { count: totalStudents } = await supabase
+            .from('profiles')
+            .select('*', { count: 'exact', head: true })
+            .eq('role', 'student')
+            .gte('created_at', start)
+            .lte('created_at', end);
+
+          const activeClasses = await supabase
+            .from('classes')
+            .select('*', { count: 'exact', head: true })
+            .eq('active', true)
+            .gte('created_at', start)
+            .lte('created_at', end);
+
           return {
             month,
-            attendance: totalSessions > 0 ? Math.round((totalAttendance / totalSessions) * 100) : 0
+            attendance: totalSessions > 0 ? Math.round((totalAttendance / totalSessions) * 100) : 0,
+            totalStudents: totalStudents || 0,
+            sessions: totalSessions,
+            activeClasses: activeClasses?.count || 0
           };
         })
       );
@@ -170,6 +324,29 @@ export function Reports() {
 
       const total = distribution.present + distribution.late + distribution.absent;
       
+      // Get session distribution
+      const { data: sessions } = await supabase
+        .from('class_sessions')
+        .select('time_of_day, status')
+        .gte('date', startOfMonth(new Date()).toISOString());
+
+      const sessionDistribution = {
+        morningSessions: 0,
+        afternoonSessions: 0,
+        eveningSessions: 0,
+        completedSessions: 0,
+        upcomingSessions: 0
+      };
+
+      sessions?.forEach(session => {
+        if (session.time_of_day === 'morning') sessionDistribution.morningSessions++;
+        else if (session.time_of_day === 'afternoon') sessionDistribution.afternoonSessions++;
+        else if (session.time_of_day === 'evening') sessionDistribution.eveningSessions++;
+
+        if (session.status === 'completed') sessionDistribution.completedSessions++;
+        else if (session.status === 'upcoming') sessionDistribution.upcomingSessions++;
+      });
+
       setStats({
         totalStudents: currentStudents || 0,
         averageAttendance: monthlyAttendance[monthlyAttendance.length - 1]?.attendance || 0,
@@ -178,7 +355,12 @@ export function Reports() {
         studentGrowth: lastMonthStudents ? ((currentStudents - lastMonthStudents) / lastMonthStudents) * 100 : 0,
         attendanceGrowth: 0, // Calculate based on previous month
         classGrowth: 0, // Calculate based on previous month
-        sessionGrowth: 0 // Calculate based on previous month
+        sessionGrowth: 0, // Calculate based on previous month
+        morningSessions: sessionDistribution.morningSessions,
+        afternoonSessions: sessionDistribution.afternoonSessions,
+        eveningSessions: sessionDistribution.eveningSessions,
+        completedSessions: sessionDistribution.completedSessions,
+        upcomingSessions: sessionDistribution.upcomingSessions
       });
 
       setAttendanceData(monthlyAttendance);
@@ -204,19 +386,18 @@ export function Reports() {
           </p>
         </div>
         <div className="flex items-center space-x-3">
-          <Button variant="outline">
-            <Calendar className="h-4 w-4 mr-2" />
-            {selectedPeriod}
-            <ChevronDown className="h-4 w-4 ml-2" />
-          </Button>
-          <Button variant="outline">
-            <BookOpen className="h-4 w-4 mr-2" />
-            {selectedClass}
-            <ChevronDown className="h-4 w-4 ml-2" />
-          </Button>
-          <Button>
-            <Download className="h-4 w-4 mr-2" />
-            Export Report
+          <Button variant="primary" onClick={exportReport} disabled={isExporting}>
+            {isExporting ? (
+              <>
+                <div className="h-4 w-4 mr-2 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                Exporting...
+              </>
+            ) : (
+              <>
+                <Download className="h-4 w-4 mr-2" />
+                Export Report
+              </>
+            )}
           </Button>
         </div>
       </div>
@@ -255,7 +436,7 @@ export function Reports() {
         ].map((stat) => (
           <div
             key={stat.title}
-            className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow"
+            className="bg-white rounded-lg shadow-lg transition-shadow duration-200"
           >
             <div className="p-6">
               <div className="flex items-center justify-between">
@@ -280,20 +461,75 @@ export function Reports() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Attendance Trend */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6" ref={chartsRef}>
+        {/* Total Students & Growth */}
         <div className="bg-white rounded-lg shadow-sm p-6">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-lg font-semibold">Attendance Trend</h2>
-            <div className="flex items-center space-x-2">
-              <Button variant="outline" size="sm">
-                <Filter className="h-4 w-4 mr-2" />
-                Filter
-              </Button>
-              <Button variant="outline" size="sm">
-                <Download className="h-4 w-4" />
-              </Button>
-            </div>
+            <h2 className="text-lg font-semibold">Student Enrollment Trend</h2>
+          </div>
+          <div className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={attendanceData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="month" />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="totalStudents" name="Total Students" fill="#6366f1" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* System Overview */}
+        <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200 p-6">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-lg font-semibold">System Overview</h2>
+          </div>
+          <div className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={[
+                    { name: 'Total Students', value: stats.totalStudents || 0 },
+                    { name: 'Average Attendance', value: Math.round((stats.averageAttendance || 0) * stats.totalSessions / 100) },
+                    { name: 'Active Classes', value: stats.activeClasses || 0 },
+                    { name: 'Total Sessions', value: stats.totalSessions || 0 }
+                  ].filter(item => item.value > 0)}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={true}
+                  outerRadius={100}
+                  innerRadius={60}
+                  paddingAngle={2}
+                  fill="#8884d8"
+                  dataKey="value"
+                  nameKey="name"
+                  label={({ value, percent }) => `${value} (${(percent * 100).toFixed(1)}%)`}
+                >
+                  {[
+                    '#3b82f6', // Total Students (Blue)
+                    '#22c55e', // Average Attendance (Green)
+                    '#6366f1', // Active Classes (Indigo)
+                    '#f97316', // Total Sessions (Orange)
+                  ].map((color, index) => (
+                    <Cell key={`cell-${index}`} fill={color} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value, name) => {
+                  const total = stats.totalStudents + Math.round((stats.averageAttendance || 0) * stats.totalSessions / 100) + stats.activeClasses + stats.totalSessions;
+                  return [`${value} (${((value as number / total) * 100).toFixed(1)}%)`, name];
+                }} />
+                <Legend verticalAlign="middle" align="right" layout="vertical" />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Average Attendance Trend */}
+        <div className="bg-white rounded-lg shadow-sm p-6">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-lg font-semibold">Average Attendance Trend</h2>
           </div>
           <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
@@ -303,39 +539,32 @@ export function Reports() {
                 <YAxis />
                 <Tooltip />
                 <Legend />
-                <Line
-                  type="monotone"
-                  dataKey="attendance"
-                  stroke="#6366f1"
-                  strokeWidth={2}
-                />
+                <Line type="monotone" dataKey="attendance" name="Average Attendance %" stroke="#6366f1" strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Attendance Distribution */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
+        {/* Active Classes Overview */}
+        <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200 p-6">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-lg font-semibold">Attendance Distribution</h2>
-            <Button variant="outline" size="sm">
-              <Download className="h-4 w-4" />
-            </Button>
+            <h2 className="text-lg font-semibold">Active Classes Overview</h2>
           </div>
           <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={distributionData}
+                  data={classData}
                   cx="50%"
                   cy="50%"
                   innerRadius={60}
                   outerRadius={80}
                   paddingAngle={5}
-                  dataKey="value"
+                  dataKey="students"
+                  nameKey="name"
                 >
-                  {distributionData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  {classData.map((_, index) => (
+                    <Cell key={`cell-${index}`} fill={`hsl(${index * 45}, 70%, 60%)`} />
                   ))}
                 </Pie>
                 <Tooltip />
@@ -351,10 +580,6 @@ export function Reports() {
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-semibold">Class Performance</h2>
           <div className="flex items-center space-x-2">
-            <Button variant="outline" size="sm">
-              <Filter className="h-4 w-4 mr-2" />
-              Filter
-            </Button>
             <Button variant="outline" size="sm">
               <FileText className="h-4 w-4 mr-2" />
               Detailed Report

@@ -1,28 +1,30 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
-  QrCode,
+  BarChart3,
+  Download,
+  Filter,
+  Calendar,
+  ChevronDown,
+  FileText,
+  Users,
   Clock,
   CheckCircle,
-  XCircle,
-  BookOpen,
-  Calendar,
   Bell,
-  Download,
-  AlertCircle,
-  ChevronDown,
-  Filter,
-  BarChart3,
-  Settings,
   X,
   MapPin,
+  QrCode,
+  BookOpen,
+  AlertCircle,
 } from 'lucide-react';
-import { AttendanceForm } from '@/components/attendance/attendance-form';
-import { QRScanner } from '@/components/attendance/qr-scanner';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth-context';
 import { format, parseISO, isToday, isThisWeek } from 'date-fns';
+import { toast } from 'sonner';
+import { ProfileAvatar } from '@/components/ui/profile-avatar';
+import { Input } from '@/components/ui/input';
+import { AttendanceForm } from '@/components/attendance/attendance-form';
+import { QRScanner } from '@/components/attendance/qr-scanner';
 import { StudentAvatar } from '@/components/ui/student-avatar';
 import {
   BarChart,
@@ -32,6 +34,14 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  LineChart,
+  Line,
+  Legend,
+  PieChart,
+  Pie,
+  Cell,
+  AreaChart,
+  Area,
 } from 'recharts';
 
 interface AttendanceRecord {
@@ -61,6 +71,13 @@ interface Notification {
   read: boolean;
 }
 
+interface ChartData {
+  dailyAttendance: { date: string; present: number; absent: number }[];
+  classPerformance: { name: string; attendance: number }[];
+  weeklyProgress: { week: string; rate: number }[];
+  overallStats: { name: string; value: number }[];
+}
+
 export function StudentDashboard() {
   const [showScanner, setShowScanner] = useState(false);
   const [scannedData, setScannedData] = useState<{
@@ -87,13 +104,21 @@ export function StudentDashboard() {
     endDate: '',
     status: 'all' as 'all' | 'present' | 'absent',
   });
+  const [chartData, setChartData] = useState<ChartData>({
+    dailyAttendance: [],
+    classPerformance: [],
+    weeklyProgress: [],
+    overallStats: []
+  });
   const { authState } = useAuth();
+  const email = authState.user?.email || '';
 
   useEffect(() => {
     fetchAttendanceHistory();
     fetchClasses();
     fetchNotifications();
     fetchStats();
+    fetchChartData();
   }, [authState.user?.id]);
 
   const fetchAttendanceHistory = async () => {
@@ -116,7 +141,6 @@ export function StudentDashboard() {
       if (data) {
         setAttendanceHistory(
           data.map((record) => {
-            const sessionStart = new Date(record.class_sessions.start_time);
             const markedTime = record.marked_at ? new Date(record.marked_at) : null;
             const status = markedTime ? 'present' : 'absent';
 
@@ -229,20 +253,179 @@ export function StudentDashboard() {
   };
 
   const fetchNotifications = async () => {
+    if (!authState.user?.id) return;
+
     try {
       const { data, error } = await supabase
         .from('notifications')
         .select('*')
-        .eq('user_id', authState.user?.id)
+        .eq('user_id', authState.user.id)
         .order('created_at', { ascending: false })
         .limit(5);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error fetching notifications:', error);
+        return;
+      }
 
-      setNotifications(data || []);
+      if (Array.isArray(data)) {
+        setNotifications(data.filter(n => n && n.created_at));
+      }
     } catch (error) {
       console.error('Error fetching notifications:', error);
-      setNotifications([]); // Set empty array on error
+      setNotifications([]);
+    }
+  };
+
+  const fetchChartData = async () => {
+    if (!authState.user?.id) return;
+
+    try {
+      // Fetch attendance records for the past 30 days
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const { data: records, error } = await supabase
+        .from('attendance_records')
+        .select(`
+          id,
+          marked_at,
+          class_sessions!inner (
+            id,
+            start_time,
+            classes (
+              id,
+              name,
+              course_code
+            )
+          )
+        `)
+        .eq('student_id', authState.user?.id)
+        .gte('marked_at', thirtyDaysAgo.toISOString())
+        .order('marked_at', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching records:', error);
+        return;
+      }
+
+      // Process daily attendance
+      const dailyAttendanceMap = new Map();
+      records?.forEach(record => {
+        const date = format(parseISO(record.class_sessions.start_time), 'MMM d');
+        const existing = dailyAttendanceMap.get(date) || { present: 0, absent: 0 };
+        existing.present += 1;
+        dailyAttendanceMap.set(date, existing);
+      });
+
+      const dailyAttendance = Array.from(dailyAttendanceMap.entries())
+        .map(([date, stats]) => ({
+          date,
+          present: stats.present,
+          absent: 0 // We'll calculate this after getting all sessions
+        }))
+        .slice(-7); // Last 7 days
+
+      // Fetch all sessions to calculate absences
+      const { data: allSessions } = await supabase
+        .from('class_sessions')
+        .select('start_time')
+        .gte('start_time', thirtyDaysAgo.toISOString())
+        .lte('start_time', new Date().toISOString());
+
+      if (allSessions) {
+        allSessions.forEach(session => {
+          const date = format(parseISO(session.start_time), 'MMM d');
+          const existing = dailyAttendanceMap.get(date);
+          if (existing) {
+            const sessionEntry = dailyAttendance.find(d => d.date === date);
+            if (sessionEntry) {
+              sessionEntry.absent = 1 - existing.present;
+            }
+          }
+        });
+      }
+
+      // Process class performance
+      const classPerformanceMap = new Map();
+      records?.forEach(record => {
+        const className = record.class_sessions.classes.name;
+        const existing = classPerformanceMap.get(className) || { present: 0, total: 0 };
+        existing.present += 1;
+        existing.total += 1;
+        classPerformanceMap.set(className, existing);
+      });
+
+      const classPerformance = Array.from(classPerformanceMap.entries())
+        .map(([name, stats]) => ({
+          name,
+          attendance: Math.round((stats.present / stats.total) * 100)
+        }));
+
+      // Process weekly progress
+      const weeklyProgressMap = new Map();
+      records?.forEach(record => {
+        const weekStart = format(parseISO(record.class_sessions.start_time), 'MMM d');
+        const existing = weeklyProgressMap.get(weekStart) || { present: 0, total: 0 };
+        existing.present += 1;
+        existing.total += 1;
+        weeklyProgressMap.set(weekStart, existing);
+      });
+
+      const weeklyProgress = Array.from(weeklyProgressMap.entries())
+        .map(([week, stats]) => ({
+          week,
+          rate: Math.round((stats.present / stats.total) * 100)
+        }))
+        .slice(-4); // Last 4 weeks
+
+      // Calculate overall stats
+      const totalPresent = records?.length || 0;
+      const totalSessions = allSessions?.length || 0;
+      const totalAbsent = totalSessions - totalPresent;
+
+      const chartData = {
+        dailyAttendance,
+        classPerformance,
+        weeklyProgress,
+        overallStats: [
+          { name: 'Present', value: totalPresent },
+          { name: 'Absent', value: totalAbsent }
+        ]
+      };
+
+      setChartData(chartData);
+
+    } catch (error) {
+      console.error('Error fetching chart data:', error);
+      setChartData({
+        dailyAttendance: [],
+        classPerformance: [],
+        weeklyProgress: [],
+        overallStats: []
+      });
+    }
+  };
+
+  const markNotificationsAsRead = async () => {
+    if (!authState.user?.id || notifications.length === 0) return;
+
+    try {
+      const { error } = await supabase
+        .from('notifications')
+        .update({ read: true })
+        .eq('user_id', authState.user.id)
+        .in('id', notifications.map(n => n.id));
+
+      if (error) {
+        console.error('Error marking notifications as read:', error);
+        return;
+      }
+
+      // Update local state to mark all notifications as read
+      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    } catch (error) {
+      console.error('Error marking notifications as read:', error);
     }
   };
 
@@ -324,24 +507,6 @@ export function StudentDashboard() {
     }
   };
 
-  const markNotificationsAsRead = async () => {
-    try {
-      const unreadNotifications = notifications.filter((n) => !n.read);
-      if (unreadNotifications.length === 0) return;
-
-      const { error } = await supabase
-        .from('notifications')
-        .update({ read: true })
-        .in('id', unreadNotifications.map((n) => n.id));
-
-      if (error) throw error;
-
-      setNotifications(notifications.map((n) => ({ ...n, read: true })));
-    } catch (error) {
-      console.error('Error marking notifications as read:', error);
-    }
-  };
-
   const filteredHistory = attendanceHistory.filter((record) => {
     const recordDate = new Date(record.date);
     const matchesStartDate = !filter.startDate || recordDate >= new Date(filter.startDate);
@@ -392,35 +557,32 @@ export function StudentDashboard() {
             Welcome back, {authState.user?.name}
           </p>
         </div>
-        <div className="flex items-center space-x-3 w-full sm:w-auto justify-end">
+        <div className="flex items-center gap-4">
           <Button
             variant="outline"
             size="sm"
-            className="text-xs sm:text-sm"
+            className="text-xs sm:text-sm relative hover:bg-blue-500/15 hover:text-blue-600 hover:border-blue-500/25"
             onClick={() => {
               setShowNotifications(true);
               markNotificationsAsRead();
             }}
           >
-            <Bell className="h-4 w-4 mr-2" />
-            <span className="bg-red-500 text-white text-xs rounded-full px-2 py-0.5">
+            <Bell className="h-4 w-4" />
+            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
               {notifications.filter((n) => !n.read).length}
             </span>
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-xs sm:text-sm"
+          <ProfileAvatar 
+            email={email} 
+            role="student" 
             onClick={() => setShowSettings(true)}
-          >
-            <Settings className="h-4 w-4" />
-          </Button>
+          />
         </div>
       </div>
 
       {/* Quick Actions */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
-        <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
+        <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200 p-4 sm:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-base sm:text-lg font-semibold">Quick Actions</h2>
           </div>
@@ -451,7 +613,7 @@ export function StudentDashboard() {
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
+        <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200 p-4 sm:p-6">
           <h2 className="text-base sm:text-lg font-semibold mb-4">Attendance Overview</h2>
           <div className="space-y-4">
             <div className="flex items-center justify-between text-sm">
@@ -493,7 +655,7 @@ export function StudentDashboard() {
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
+        <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200 p-4 sm:p-6">
           <h2 className="text-base sm:text-lg font-semibold mb-4">Upcoming Classes</h2>
           <div className="space-y-3 sm:space-y-4">
             {upcomingClasses.length > 0 ? (
@@ -513,36 +675,172 @@ export function StudentDashboard() {
                 </div>
               ))
             ) : (
-              <p className="text-center text-gray-500 text-sm">No upcoming classes</p>
+              <p className="text-center text-gray-500">No upcoming classes</p>
             )}
           </div>
         </div>
       </div>
+      
+
+       {/* Charts Section */}
+       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+        {/* Daily Attendance */}
+        <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200 p-6">
+          <h2 className="text-lg font-semibold mb-4">Daily Attendance</h2>
+          <div className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData.dailyAttendance} margin={{ top: 20, right: 30, left: 20, bottom: 30 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" angle={-45} textAnchor="end" height={60} />
+                <YAxis />
+                <Tooltip 
+                  formatter={(value) => [value, 'Sessions']}
+                  contentStyle={{
+                    backgroundColor: '#fff',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    padding: '10px'
+                  }}
+                />
+                <Legend />
+                <Bar dataKey="present" name="Present" fill="#3b82f6" />
+                <Bar dataKey="absent" name="Absent" fill="#f87171" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        
+        {/* Overall Stats */}
+        <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200 p-6">
+          <h2 className="text-lg font-semibold mb-4">Overall Attendance</h2>
+          <div className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart margin={{ top: 20, right: 30, left: 20, bottom: 30 }}>
+                <Pie
+                  data={chartData.overallStats}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={80}
+                  label={(entry) => `${entry.name}: ${((entry.value / chartData.overallStats.reduce((sum, item) => sum + item.value, 0)) * 100).toFixed(1)}%`}
+                >
+                  <Cell fill="#22c55e" />
+                  <Cell fill="#f87171" />
+                </Pie>
+                <Tooltip 
+                  formatter={(value, name) => [`${value} sessions`, name]}
+                  contentStyle={{
+                    backgroundColor: '#fff',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    padding: '10px'
+                  }}
+                />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Class Performance */}
+        <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200 p-6">
+          <h2 className="text-lg font-semibold mb-4">Class Performance</h2>
+          <div className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData.classPerformance} margin={{ top: 20, right: 30, left: 20, bottom: 30 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis 
+                  dataKey="name" 
+                  angle={-45} 
+                  textAnchor="end" 
+                  height={60}
+                  interval={0}
+                />
+                <YAxis 
+                  domain={[0, 100]}
+                  tickFormatter={(value) => `${value}%`}
+                />
+                <Tooltip 
+                  formatter={(value) => [`${value}%`, 'Attendance Rate']}
+                  contentStyle={{
+                    backgroundColor: '#fff',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    padding: '10px'
+                  }}
+                />
+                <Legend />
+                <Line 
+                  type="monotone" 
+                  dataKey="attendance" 
+                  name="Attendance Rate"
+                  stroke="#3b82f6"
+                  strokeWidth={2}
+                  dot={{ r: 4, fill: '#3b82f6' }}
+                  activeDot={{ r: 8 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Weekly Progress */}
+        <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200 p-6">
+          <h2 className="text-lg font-semibold mb-4">Weekly Progress</h2>
+          <div className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData.weeklyProgress} margin={{ top: 20, right: 30, left: 20, bottom: 30 }}>
+                <defs>
+                  <linearGradient id="colorRate" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis 
+                  dataKey="week" 
+                  angle={-45} 
+                  textAnchor="end" 
+                  height={60}
+                  interval={0}
+                />
+                <YAxis 
+                  domain={[0, 100]}
+                  tickFormatter={(value) => `${value}%`}
+                />
+                <Tooltip 
+                  formatter={(value) => [`${value}%`, 'Attendance Rate']}
+                  contentStyle={{
+                    backgroundColor: '#fff',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    padding: '10px'
+                  }}
+                />
+                <Legend />
+                <Area
+                  type="monotone"
+                  dataKey="rate"
+                  name="Attendance Rate"
+                  stroke="#3b82f6"
+                  fillOpacity={1}
+                  fill="url(#colorRate)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 mt-4 sm:mt-6">
         {/* Attendance History */}
-        <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
+        <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200 p-4 sm:p-6">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 sm:mb-6 gap-3">
             <h2 className="text-base sm:text-lg font-semibold">Recent Attendance</h2>
-            <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-xs sm:text-sm"
-                onClick={() => setShowFilter(true)}
-              >
-                <Filter className="h-3 w-3 sm:h-4 sm:w-4 mr-1.5" />
-                Filter
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="px-2 sm:px-3"
-                onClick={downloadHistory}
-              >
-                <Download className="h-3 w-3 sm:h-4 sm:w-4" />
-              </Button>
-            </div>
           </div>
           <div className="space-y-3 sm:space-y-4">
             {filteredHistory.slice(0, 5).map((record) => (
@@ -579,46 +877,11 @@ export function StudentDashboard() {
           </div>
         </div>
 
-        {/* Notifications */}
-        <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
-          <div className="flex items-center justify-between mb-4 sm:mb-6">
-            <h2 className="text-base sm:text-lg font-semibold">Notifications</h2>
-            <Button variant="ghost" size="sm" className="text-xs sm:text-sm">
-              <Bell className="h-4 w-4" />
-            </Button>
-          </div>
-          <div className="space-y-3 sm:space-y-4">
-            {notifications.map((notification) => (
-              <div
-                key={notification.id}
-                className={`p-3 sm:p-4 rounded-lg ${
-                  notification.read ? 'bg-gray-50' : 'bg-blue-50'
-                }`}
-              >
-                <div className="flex items-center space-x-2">
-                  {notification.type === 'warning' ? (
-                    <AlertCircle className="h-4 w-4 sm:h-5 sm:w-5 text-yellow-500" />
-                  ) : notification.type === 'success' ? (
-                    <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5 text-green-500" />
-                  ) : (
-                    <Bell className="h-4 w-4 sm:h-5 sm:w-5 text-blue-500" />
-                  )}
-                  <h3 className="font-medium text-sm sm:text-base">{notification.title}</h3>
-                </div>
-                <p className="text-xs sm:text-sm text-gray-600 mt-1">
-                  {notification.message}
-                </p>
-                <p className="text-xs text-gray-500 mt-2">
-                  {format(parseISO(notification.created_at), 'MMM d, HH:mm')}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
 
-      {/* ... */}
+     
 
+  
       {showScanner && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
@@ -687,14 +950,13 @@ export function StudentDashboard() {
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-bold">Settings</h2>
+              <h2 className="text-xl font-bold">Profile Information</h2>
               <Button variant="ghost" size="sm" onClick={() => setShowSettings(false)}>
                 <X className="h-4 w-4" />
               </Button>
             </div>
             <div className="space-y-6">
               <div>
-                <h3 className="font-medium mb-4">Profile Information</h3>
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">

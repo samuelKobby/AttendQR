@@ -63,6 +63,25 @@ interface AttendanceReport {
   };
 }
 
+interface SessionWithEnrollments {
+  id: string;
+  class: {
+    class_enrollments: Array<{ count: number }>;
+  };
+  attendance_records: Array<{ count: number }>;
+}
+
+interface SessionWithAttendance {
+  id: string;
+  start_time: string;
+  class: {
+    class_enrollments: Array<{ count: number }>;
+  };
+  attendance_records: Array<{
+    marked_at: string;
+  }>;
+}
+
 export function Reports() {
   const [selectedPeriod, setSelectedPeriod] = useState('This Month');
   const [selectedClass, setSelectedClass] = useState('All Classes');
@@ -273,20 +292,29 @@ export function Reports() {
             .from('class_sessions')
             .select(`
               id,
+              class:classes!inner (
+                class_enrollments (count)
+              ),
               attendance_records (count)
             `)
             .eq('lecturer_id', authState.user?.id)
             .gte('start_time', start)
-            .lte('end_time', end);
+            .lte('end_time', end) as { data: SessionWithEnrollments[] | null };
 
-          const totalSessions = sessions?.length || 0;
-          const totalAttendances = sessions?.reduce(
+          if (!sessions?.length) return { month, attendance: 0 };
+
+          const totalAttendances = sessions.reduce(
             (acc, session) => acc + (session.attendance_records[0]?.count || 0),
             0
-          ) || 0;
+          );
 
-          const rate = totalSessions > 0
-            ? (totalAttendances / (totalSessions * stats.totalStudents)) * 100
+          const totalExpectedAttendances = sessions.reduce(
+            (acc, session) => acc + (session.class.class_enrollments[0]?.count || 0),
+            0
+          );
+
+          const rate = totalExpectedAttendances > 0
+            ? (totalAttendances / totalExpectedAttendances) * 100
             : 0;
 
           return {
@@ -299,6 +327,11 @@ export function Reports() {
       setAttendanceData(attendanceByMonth);
     } catch (error) {
       console.error('Error fetching attendance data:', error);
+      toast({
+        title: "Error fetching attendance data",
+        description: "Please try again later",
+        variant: "destructive"
+      });
     }
   };
 
@@ -393,11 +426,16 @@ export function Reports() {
         .select(`
           id,
           start_time,
+          class:classes!inner (
+            class_enrollments (count)
+          ),
           attendance_records (
             marked_at
           )
         `)
-        .eq('lecturer_id', authState.user?.id);
+        .eq('lecturer_id', authState.user?.id)
+        .gte('start_time', dateRange[0].toISOString())
+        .lte('end_time', dateRange[1].toISOString()) as { data: SessionWithAttendance[] | null };
 
       if (sessions) {
         let present = 0;
@@ -407,6 +445,7 @@ export function Reports() {
         sessions.forEach(session => {
           const sessionStart = new Date(session.start_time);
           const lateThreshold = new Date(sessionStart.getTime() + 15 * 60000); // 15 minutes
+          const totalExpected = session.class.class_enrollments[0]?.count || 0;
 
           session.attendance_records.forEach(record => {
             const markedTime = new Date(record.marked_at);
@@ -417,20 +456,25 @@ export function Reports() {
             }
           });
 
-          // Calculate absences based on total enrolled students
-          const totalExpected = stats.totalStudents;
           absent += totalExpected - session.attendance_records.length;
         });
 
         const total = present + late + absent;
-        setPieData([
-          { name: 'Present', value: (present / total) * 100, color: '#22c55e' },
-          { name: 'Late', value: (late / total) * 100, color: '#eab308' },
-          { name: 'Absent', value: (absent / total) * 100, color: '#ef4444' },
-        ]);
+        if (total > 0) {
+          setPieData([
+            { name: 'Present', value: Math.round((present / total) * 100), color: '#22c55e' },
+            { name: 'Late', value: Math.round((late / total) * 100), color: '#eab308' },
+            { name: 'Absent', value: Math.round((absent / total) * 100), color: '#ef4444' },
+          ]);
+        }
       }
     } catch (error) {
       console.error('Error fetching attendance distribution:', error);
+      toast({
+        title: "Error fetching attendance distribution",
+        description: "Please try again later",
+        variant: "destructive"
+      });
     }
   };
 
@@ -648,7 +692,7 @@ export function Reports() {
         ].map((stat) => (
           <div
             key={stat.title}
-            className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow"
+            className="bg-white rounded-lg shadow-lg transition-shadow duration-200"
           >
             <div className="p-6">
               <div className="flex items-center justify-between">
@@ -675,7 +719,7 @@ export function Reports() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Attendance Trend */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
+        <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200 p-6">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-semibold">Attendance Trend</h2>
             <div className="flex items-center space-x-2">
@@ -708,7 +752,7 @@ export function Reports() {
         </div>
 
         {/* Attendance Distribution */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
+        <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200 p-6">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-semibold">Attendance Distribution</h2>
             <Button variant="outline" size="sm">
@@ -740,7 +784,7 @@ export function Reports() {
       </div>
 
       {/* Class Performance */}
-      <div className="bg-white rounded-lg shadow-sm p-6">
+      <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200 p-6">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-semibold">Class Performance</h2>
           <div className="flex items-center space-x-2">

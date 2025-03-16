@@ -21,6 +21,7 @@ interface Class {
   course_code: string;
   total_students: number;
   attendance_rate: number;
+  capacity: number;
 }
 
 interface Session {
@@ -54,7 +55,8 @@ export function LecturerDashboard() {
           class_enrollments (count),
           class_sessions (
             attendance_records (count)
-          )
+          ),
+          capacity
         `)
         .eq('lecturer_id', authState.user?.id);
 
@@ -72,6 +74,7 @@ export function LecturerDashboard() {
               ) /
                 (cls.class_sessions.length * cls.class_enrollments[0]?.count || 1)) *
               100,
+            capacity: cls.capacity,
           }))
         );
       }
@@ -123,73 +126,234 @@ export function LecturerDashboard() {
           <h1 className="text-xl sm:text-2xl font-bold">Lecturer Dashboard</h1>
           <p className="text-sm text-gray-500">Manage your classes and attendance</p>
         </div>
-        <Button className="w-full sm:w-auto">
-          <Plus className="h-4 w-4 mr-2" />
-          Create New Class
-        </Button>
       </div>
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-4 sm:p-6 rounded-lg shadow-sm">
+        <div className="bg-white p-6 rounded-lg shadow-lg transition-shadow duration-200">
           <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Total Classes</p>
-              <p className="text-2xl sm:text-3xl font-bold mt-1">{classes.length}</p>
-            </div>
-            <div className="p-3 bg-blue-50 rounded-full">
-              <BookOpen className="h-5 w-5 sm:h-6 sm:w-6 text-blue-500" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white p-4 sm:p-6 rounded-lg shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Active Students</p>
-              <p className="text-2xl sm:text-3xl font-bold mt-1">
-                {classes.reduce((acc, cls) => acc + cls.total_students, 0)}
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-500">Total Classes</p>
+              <div className="flex items-baseline mt-1">
+                <p className="text-2xl font-semibold">{classes.length}</p>
+                <p className="ml-2 text-sm text-green-500">
+                  {(classes.length * 1).toFixed(1)}%
+                </p>
+              </div>
+              <div className="w-full bg-gray-200 h-1 mt-3 rounded-full overflow-hidden">
+                <div 
+                  className="bg-blue-500 h-1 rounded-full" 
+                  style={{ width: `${Math.min(classes.length * 1, 100)}%` }} 
+                />
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                {Math.min(classes.length * 1, 100).toFixed(0)}% completed
               </p>
             </div>
-            <div className="p-3 bg-green-50 rounded-full">
-              <Users className="h-5 w-5 sm:h-6 sm:w-6 text-green-500" />
+            <div className="ml-4">
+              <div className="relative">
+                <svg className="w-16 h-16" viewBox="0 0 36 36">
+                  <circle cx="18" cy="18" r="16" fill="none" className="stroke-current text-blue-100" strokeWidth="2"/>
+                  <circle 
+                    cx="18" 
+                    cy="18" 
+                    r="16" 
+                    fill="none" 
+                    className="stroke-current text-blue-500" 
+                    strokeWidth="2"
+                    strokeDasharray="100" 
+                    strokeDashoffset={100 - Math.min(classes.length * 1, 100)} 
+                    transform="rotate(-90 18 18)"
+                  />
+                </svg>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <BookOpen className="h-6 w-6 text-blue-500" />
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="bg-white p-4 sm:p-6 rounded-lg shadow-sm">
+        <div className="bg-white p-6 rounded-lg shadow-lg transition-shadow duration-200">
           <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Today's Sessions</p>
-              <p className="text-2xl sm:text-3xl font-bold mt-1">{recentSessions.length}</p>
-            </div>
-            <div className="p-3 bg-purple-50 rounded-full">
-              <Calendar className="h-5 w-5 sm:h-6 sm:w-6 text-purple-500" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white p-4 sm:p-6 rounded-lg shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Avg. Attendance</p>
-              <p className="text-2xl sm:text-3xl font-bold mt-1">
-                {Math.round(
-                  classes.reduce((acc, cls) => acc + cls.attendance_rate, 0) /
-                    classes.length
-                )}
-                %
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-500">Active Students</p>
+              <div className="flex items-baseline mt-1">
+                <p className="text-2xl font-semibold">
+                  {classes.reduce((acc, cls) => acc + cls.total_students, 0)}
+                </p>
+                <p className="ml-2 text-sm text-green-500">
+                  {((classes.reduce((acc, cls) => acc + cls.total_students, 0) / (classes.reduce((acc, cls) => acc + cls.capacity, 0) || 1)) * 100).toFixed(1)}%
+                </p>
+              </div>
+              <div className="w-full bg-gray-200 h-1 mt-3 rounded-full overflow-hidden">
+                <div 
+                  className="bg-green-500 h-1 rounded-full" 
+                  style={{ 
+                    width: `${Math.min((classes.reduce((acc, cls) => acc + cls.total_students, 0) / (classes.reduce((acc, cls) => acc + cls.capacity, 0) || 1)) * 100, 100)}%` 
+                  }} 
+                />
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                {Math.min((classes.reduce((acc, cls) => acc + cls.total_students, 0) / (classes.reduce((acc, cls) => acc + cls.capacity, 0) || 1)) * 100, 100).toFixed(0)}% of capacity
               </p>
             </div>
-            <div className="p-3 bg-yellow-50 rounded-full">
-              <BarChart3 className="h-5 w-5 sm:h-6 sm:w-6 text-yellow-500" />
+            <div className="ml-4">
+              <div className="relative">
+                <svg className="w-16 h-16" viewBox="0 0 36 36">
+                  <circle cx="18" cy="18" r="16" fill="none" className="stroke-current text-green-100" strokeWidth="2"/>
+                  <circle 
+                    cx="18" 
+                    cy="18" 
+                    r="16" 
+                    fill="none" 
+                    className="stroke-current text-green-500" 
+                    strokeWidth="2"
+                    strokeDasharray="100" 
+                    strokeDashoffset={100 - Math.min((classes.reduce((acc, cls) => acc + cls.total_students, 0) / (classes.reduce((acc, cls) => acc + cls.capacity, 0) || 1)) * 100, 100)}
+                    transform="rotate(-90 18 18)"
+                  />
+                </svg>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <Users className="h-6 w-6 text-green-500" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg shadow-lg transition-shadow duration-200">
+          <div className="flex items-center justify-between">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-500">Today's Sessions</p>
+              <div className="flex items-baseline mt-1">
+                <p className="text-2xl font-semibold">{recentSessions.length}</p>
+                <p className="ml-2 text-sm text-green-500">
+                  {(recentSessions.length * 1).toFixed(1)}%
+                </p>
+              </div>
+              <div className="w-full bg-gray-200 h-1 mt-3 rounded-full overflow-hidden">
+                <div 
+                  className="bg-purple-500 h-1 rounded-full" 
+                  style={{ 
+                    width: `${Math.min(recentSessions.length * 1, 100)}%` 
+                  }} 
+                />
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                {Math.min(recentSessions.length * 1, 100).toFixed(0)}% completed
+              </p>
+            </div>
+            <div className="ml-4">
+              <div className="relative">
+                <svg className="w-16 h-16" viewBox="0 0 36 36">
+                  <circle cx="18" cy="18" r="16" fill="none" className="stroke-current text-purple-100" strokeWidth="2"/>
+                  <circle 
+                    cx="18" 
+                    cy="18" 
+                    r="16" 
+                    fill="none" 
+                    className="stroke-current text-purple-500" 
+                    strokeWidth="2"
+                    strokeDasharray="100" 
+                    strokeDashoffset={100 - Math.min(recentSessions.length * 1, 100)}
+                    transform="rotate(-90 18 18)"
+                  />
+                </svg>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <Calendar className="h-6 w-6 text-purple-500" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg shadow-lg transition-shadow duration-200">
+          <div className="flex items-center justify-between">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-500">Avg. Attendance</p>
+              <div className="flex items-baseline mt-1">
+                <p className="text-2xl font-semibold">
+                  {classes.length > 0
+                    ? Math.round(
+                        classes
+                          .filter((cls) => cls.total_students > 0)
+                          .reduce((acc, cls) => acc + cls.attendance_rate, 0) /
+                        classes.filter((cls) => cls.total_students > 0).length || 0
+                      )
+                    : 0}%
+                </p>
+                <p className="ml-2 text-sm text-green-500">
+                  {((classes.length > 0
+                    ? Math.round(
+                        classes
+                          .filter((cls) => cls.total_students > 0)
+                          .reduce((acc, cls) => acc + cls.attendance_rate, 0) /
+                        classes.filter((cls) => cls.total_students > 0).length || 0
+                      )
+                    : 0) / 100).toFixed(1)}%
+                </p>
+              </div>
+              <div className="w-full bg-gray-200 h-1 mt-3 rounded-full overflow-hidden">
+                <div 
+                  className="bg-yellow-500 h-1 rounded-full" 
+                  style={{ 
+                    width: `${classes.length > 0
+                      ? Math.round(
+                          classes
+                            .filter((cls) => cls.total_students > 0)
+                            .reduce((acc, cls) => acc + cls.attendance_rate, 0) /
+                          classes.filter((cls) => cls.total_students > 0).length || 0
+                        )
+                      : 0}%` 
+                  }} 
+                />
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                {(classes.length > 0
+                  ? Math.round(
+                      classes
+                        .filter((cls) => cls.total_students > 0)
+                        .reduce((acc, cls) => acc + cls.attendance_rate, 0) /
+                      classes.filter((cls) => cls.total_students > 0).length || 0
+                    )
+                  : 0)}% of target
+              </p>
+            </div>
+            <div className="ml-4">
+              <div className="relative">
+                <svg className="w-16 h-16" viewBox="0 0 36 36">
+                  <circle cx="18" cy="18" r="16" fill="none" className="stroke-current text-yellow-100" strokeWidth="2"/>
+                  <circle 
+                    cx="18" 
+                    cy="18" 
+                    r="16" 
+                    fill="none" 
+                    className="stroke-current text-yellow-500" 
+                    strokeWidth="2"
+                    strokeDasharray="100" 
+                    strokeDashoffset={100 - (classes.length > 0
+                      ? Math.round(
+                          classes
+                            .filter((cls) => cls.total_students > 0)
+                            .reduce((acc, cls) => acc + cls.attendance_rate, 0) /
+                          classes.filter((cls) => cls.total_students > 0).length || 0
+                        )
+                      : 0)} 
+                    transform="rotate(-90 18 18)"
+                  />
+                </svg>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <BarChart3 className="h-6 w-6 text-yellow-500" />
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
       {/* Recent Activity */}
-      <div className="bg-white rounded-lg shadow-sm">
+      <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200">
         <div className="p-4 sm:p-6 border-b">
           <h2 className="text-lg font-semibold">Recent Activity</h2>
         </div>
@@ -249,7 +413,7 @@ export function LecturerDashboard() {
 
       {/* Active Session */}
       {activeClassId && (
-        <div className="bg-white rounded-lg shadow-sm">
+        <div className="bg-white rounded-lg shadow-lg transition-shadow duration-200">
           <div className="p-4 sm:p-6 border-b">
             <h2 className="text-lg font-semibold">Active Session QR Code</h2>
           </div>

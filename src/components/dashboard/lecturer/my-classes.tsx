@@ -233,8 +233,8 @@ export function MyClasses() {
 
               <div className="mt-4 space-y-2">
                 <div className="flex items-center text-sm text-gray-600">
-                  <Users className="h-4 w-4 mr-2" />
-                  <span>{cls.total_students} Students</span>
+                  <Users className="h-4 w-4 mr-2 " />
+                  <span>{cls.capacity}</span>
                 </div>
                 {cls.location && (
                   <div className="flex items-center text-sm text-gray-600">
