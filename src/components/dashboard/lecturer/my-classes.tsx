@@ -17,6 +17,7 @@ import {
   Calendar,
   History,
   QrCode,
+  X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth-context';
@@ -27,6 +28,7 @@ import { AttendanceQRModal } from './attendance-qr-modal';
 import { databaseService } from '@/services/database';
 import { toast } from 'sonner';
 import Swal from 'sweetalert2';
+import { Link } from 'react-router-dom';
 
 interface Class {
   id: string;
@@ -46,6 +48,15 @@ export function MyClasses() {
   const [selectedClass, setSelectedClass] = useState<Class | null>(null);
   const [classes, setClasses] = useState<Class[]>([]);
   const [loading, setLoading] = useState(false);
+  const [showStudentList, setShowStudentList] = useState(false);
+  const [selectedClassForStudents, setSelectedClassForStudents] = useState<Class | null>(null);
+  const [students, setStudents] = useState<Array<{
+    id: string;
+    full_name: string;
+    email: string;
+    student_id?: string;
+    status: 'active' | 'inactive';
+  }>>([]);
   const { authState } = useAuth();
 
   useEffect(() => {
@@ -180,6 +191,28 @@ export function MyClasses() {
     fetchClasses();
   };
 
+  const handleStudentStatusChange = async (studentId: string, newStatus: 'active' | 'inactive') => {
+    if (!selectedClassForStudents) return;
+
+    try {
+      const { error } = await supabase
+        .from('class_enrollments')
+        .update({ status: newStatus })
+        .eq('class_id', selectedClassForStudents.id)
+        .eq('student_id', studentId);
+
+      if (error) throw error;
+
+      // Refresh the class list to get updated student counts
+      fetchClasses();
+
+      toast.success(`Student ${newStatus === 'active' ? 'activated' : 'deactivated'} successfully`);
+    } catch (error) {
+      console.error('Error updating student status:', error);
+      toast.error('Failed to update student status');
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -264,6 +297,16 @@ export function MyClasses() {
                   Take Attendance
                 </Button>
                 
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                >
+                  <Link to={`/lecturer/classes/${cls.id}/students`} className="flex items-center justify-center w-full">
+                    <Users className="h-4 w-4 mr-2" />
+                    Manage Students
+                  </Link>
+                </Button>
               </div>
             </div>
           </div>
@@ -308,6 +351,83 @@ export function MyClasses() {
           }}
         />
       )}
+
+      {/* Student List Modal
+      {showStudentList && selectedClassForStudents && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-4xl rounded-lg bg-white p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-xl font-semibold">
+                  Students in {selectedClassForStudents.name}
+                </h2>
+                <p className="text-sm text-gray-500">
+                  {students.length} student{students.length !== 1 ? 's' : ''}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setShowStudentList(false);
+                  setSelectedClassForStudents(null);
+                }}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b">
+                    <th className="px-4 py-2 text-left">Name</th>
+                    <th className="px-4 py-2 text-left">Email</th>
+                    <th className="px-4 py-2 text-left">Student ID</th>
+                    <th className="px-4 py-2 text-left">Status</th>
+                    <th className="px-4 py-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {students.map((student) => (
+                    <tr key={student.id} className="border-b">
+                      <td className="px-4 py-2">{student.full_name}</td>
+                      <td className="px-4 py-2">{student.email}</td>
+                      <td className="px-4 py-2">{student.student_id || '-'}</td>
+                      <td className="px-4 py-2">
+                        <span
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            student.status === 'active'
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-red-100 text-red-800'
+                          }`}
+                        >
+                          {student.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            handleStudentStatusChange(
+                              student.id,
+                              student.status === 'active' ? 'inactive' : 'active'
+                            )
+                          }
+                          className={student.status === 'active' ? 'text-red-600' : 'text-green-600'}
+                        >
+                          {student.status === 'active' ? 'Deactivate' : 'Activate'}
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )} */}
     </div>
   );
 }

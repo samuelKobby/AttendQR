@@ -5,33 +5,43 @@ import {
   Trash2,
   CheckCircle,
   XCircle,
-  Pencil,
   Users,
+  Upload,
+  Key,
+  GraduationCap,
+  Pencil
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AddUserForm } from '@/components/forms/add-user-form';
 import { StudentAvatar } from '@/components/ui/student-avatar';
+import { BulkStudentUpload } from './bulk-student-upload';
+import { AssignClassModal } from './assign-class-modal';
+import { databaseService } from '@/services/database';
+import toast from 'react-hot-toast';
 
 interface Student {
   id: string;
   email: string;
-  name: string;
-  studentId: string;
-  classes: number;
-  attendance: number;
-  status: 'active' | 'inactive';
-  lastActive: string;
+  full_name: string;
+  student_id?: string;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export function ManageStudents() {
   const [students, setStudents] = useState<Student[]>([]);
   const [isAddingStudent, setIsAddingStudent] = useState(false);
+  const [isBulkUploading, setIsBulkUploading] = useState(false);
+  const [isAssigningClass, setIsAssigningClass] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
+  const [showBulkActions, setShowBulkActions] = useState(false);
 
   useEffect(() => {
     fetchStudents();
@@ -55,87 +65,50 @@ export function ManageStudents() {
       const formattedStudents = studentsData?.map(student => ({
         id: student.id,
         email: student.email,
-        name: student.full_name || student.email.split('@')[0],
-        studentId: student.student_id || 'N/A',
-        classes: 0,
-        attendance: 0,
-        // Ensure status is strictly typed as 'active' | 'inactive'
-        status: (student.status === 'active' || student.status === 'inactive') 
-          ? student.status 
-          : 'inactive',
-        lastActive: student.last_sign_in_at 
-          ? new Date(student.last_sign_in_at).toLocaleDateString()
-          : 'Never'
+        full_name: student.full_name,
+        student_id: student.student_id,
+        status: student.status,
+        created_at: student.created_at,
+        updated_at: student.updated_at,
       })) || [];
 
       // Update state with basic information first
       setStudents(formattedStudents);
 
-      // Then fetch enrollments if we have students
+      // Then fetch attendance records if we have students
       if (formattedStudents.length > 0) {
         const studentIds = formattedStudents.map(s => s.id);
         
-        // Get class enrollments
-        const { data: enrollmentsData, error: enrollmentsError } = await supabase
-          .from('class_enrollments')
-          .select('student_id, class_id')
-          .in('student_id', studentIds);
-
-        if (enrollmentsError) {
-          console.error('Error fetching enrollments:', enrollmentsError);
-          return;
-        }
-
         // Get attendance records for these students
         const { data: attendanceData, error: attendanceError } = await supabase
           .from('attendance_records')
-          .select('student_id, status')
-          .in('student_id', studentIds);
+          .select('user_id, status')
+          .in('user_id', studentIds);
 
         if (attendanceError) {
           console.error('Error fetching attendance:', attendanceError);
           return;
         }
 
-        // Update students with enrollment and attendance data
+        // Update students with attendance data
         const updatedStudents = formattedStudents.map(student => {
-          const studentEnrollments = enrollmentsData?.filter(e => e.student_id === student.id) || [];
-          const studentAttendance = attendanceData?.filter(a => a.student_id === student.id) || [];
+          const studentAttendance = attendanceData?.filter(a => a.user_id === student.id) || [];
+          const presentCount = studentAttendance.filter(a => a.status === 'present').length;
+          const totalSessions = studentAttendance.length;
           
-          const totalAttendanceRecords = studentAttendance.length;
-          const presentRecords = studentAttendance.filter(a => a.status === 'present').length;
-          
-          const attendancePercentage = totalAttendanceRecords > 0 
-            ? Math.round((presentRecords / totalAttendanceRecords) * 100) 
-            : 0;
-
-          // Update status to inactive if no recent activity (30 days)
-          const lastActive = new Date(student.lastActive);
-          const thirtyDaysAgo = new Date();
-          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-          
-          const newStatus = lastActive < thirtyDaysAgo ? 'inactive' as const : 'active' as const;
-
           return {
             ...student,
-            classes: studentEnrollments.length,
-            attendance: attendancePercentage,
-            status: newStatus
+            attendance: totalSessions > 0 ? Math.round((presentCount / totalSessions) * 100) : 0
           };
         });
 
         setStudents(updatedStudents);
       }
     } catch (error) {
-      console.error('Error in fetchStudents:', error);
+      console.error('Error:', error);
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleEdit = (student: Student) => {
-    setEditingStudent(student);
-    setIsAddingStudent(true);
   };
 
   const handleDelete = async (studentId: string) => {
@@ -189,12 +162,115 @@ export function ManageStudents() {
     }
   };
 
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      setSelectedStudents(students.map(s => s.id));
+      setShowBulkActions(true);
+    } else {
+      setSelectedStudents([]);
+      setShowBulkActions(false);
+    }
+  };
+
+  const handleSelectStudent = (studentId: string, checked: boolean) => {
+    if (checked) {
+      setSelectedStudents(prev => [...prev, studentId]);
+      setShowBulkActions(true);
+    } else {
+      setSelectedStudents(prev => prev.filter(id => id !== studentId));
+      const updatedCount = selectedStudents.length - 1;
+      setShowBulkActions(updatedCount > 1);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!window.confirm(`Are you sure you want to delete ${selectedStudents.length} students? This action cannot be undone.`)) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // Call the stored procedure to delete the students and related data
+      const { error: txnError } = await supabase.rpc('delete_students', {
+        p_student_ids: selectedStudents
+      });
+
+      if (txnError) throw txnError;
+
+      // Update the local state to remove the deleted students
+      setStudents((prev) => prev.filter((s) => !selectedStudents.includes(s.id)));
+      setSelectedStudents([]);
+      setShowBulkActions(false);
+    } catch (error) {
+      console.error('Error deleting students:', error);
+      alert('Failed to delete students');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBulkUpdateStatus = async (status: 'active' | 'inactive') => {
+    if (!window.confirm(`Are you sure you want to mark ${selectedStudents.length} students as ${status}?`)) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // Update the status in the database
+      const { error } = await supabase
+        .from('profiles')
+        .update({ status: status })
+        .in('id', selectedStudents);
+
+      if (error) throw error;
+
+      // Update local state
+      setStudents(prev => 
+        prev.map(student => 
+          selectedStudents.includes(student.id) 
+            ? { ...student, status: status }
+            : student
+        )
+      );
+      setSelectedStudents([]);
+      setShowBulkActions(false);
+    } catch (error) {
+      console.error('Error updating students:', error);
+      alert('Failed to update students');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBulkResetPasswords = async () => {
+    if (!window.confirm(`Are you sure you want to reset passwords for ${selectedStudents.length} students? They will receive emails with their new temporary passwords.`)) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const results = await databaseService.bulkResetPasswords(selectedStudents);
+      toast.success(`Successfully reset passwords for ${results.length} students`);
+      setSelectedStudents([]);
+      setShowBulkActions(false);
+    } catch (error) {
+      console.error('Error resetting passwords:', error);
+      toast.error('Failed to reset passwords');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEdit = (student: Student) => {
+    setEditingStudent(student);
+    setIsAddingStudent(true);
+  };
+
   // Filter students based on search term and status
   const filteredStudents = students.filter(student => {
     const matchesSearch = 
-      student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      student.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      student.studentId.toLowerCase().includes(searchTerm.toLowerCase());
+      student.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      student.email.toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesStatus = statusFilter === 'all' || student.status === statusFilter;
     
@@ -203,64 +279,139 @@ export function ManageStudents() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mt-10 gap-4">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold">Manage Students</h1>
-          <p className="text-sm text-gray-500">Add and manage student accounts</p>
+      <div className="flex justify-between items-center">
+        <div className="flex items-center space-x-2">
+          <h2 className="text-2xl font-bold">Manage Students</h2>
+          <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded text-sm">
+            {students.length} total
+          </span>
         </div>
-        <Button 
-          className="w-full sm:w-auto"
-          onClick={() => setIsAddingStudent(true)}
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Add Student
-        </Button>
+        <div className="flex space-x-2">
+          <Button
+            onClick={() => setIsAddingStudent(true)}
+            className="bg-green-600 hover:bg-green-700"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add Student
+          </Button>
+          <Button
+            onClick={() => setIsBulkUploading(true)}
+            variant="outline"
+            className="border-green-600 text-green-600 hover:bg-green-50"
+          >
+            <Upload className="h-4 w-4 mr-2" />
+            Bulk Upload
+          </Button>
+        </div>
       </div>
 
-      {/* Search and Filter */}
-      <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Bulk Actions */}
+      {showBulkActions && (
+        <div className="bg-gray-50 p-4 rounded-lg flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <span className="text-sm font-medium">{selectedStudents.length} students selected</span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleBulkUpdateStatus('active')}
+              disabled={loading}
+              className="text-green-600 border-green-600 hover:bg-green-50"
+            >
+              <CheckCircle className="h-4 w-4 mr-2" />
+              Mark Active
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleBulkUpdateStatus('inactive')}
+              disabled={loading}
+              className="text-yellow-600 border-yellow-600 hover:bg-yellow-50"
+            >
+              <XCircle className="h-4 w-4 mr-2" />
+              Mark Inactive
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsAssigningClass(true)}
+              disabled={loading}
+              className="text-blue-600 border-blue-600 hover:bg-blue-50"
+            >
+              <GraduationCap className="h-4 w-4 mr-2" />
+              Assign to Class
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleBulkResetPasswords}
+              disabled={loading}
+              className="text-purple-600 border-purple-600 hover:bg-purple-50"
+            >
+              <Key className="h-4 w-4 mr-2" />
+              Reset Passwords
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleBulkDelete}
+              disabled={loading}
+              className="text-red-600 border-red-600 hover:bg-red-50"
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Search and filters */}
+      <div className="flex space-x-4">
+        <div className="flex-1">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
             <Input
               type="text"
               placeholder="Search students..."
-              className="w-full pl-10 pr-4 py-2 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10"
             />
           </div>
-          <div>
-            <select 
-              className="w-full rounded-md border border-gray-300 py-2 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}
-            >
-              <option value="all">All Status</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-            </select>
-          </div>
         </div>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}
+          className="rounded-md border-gray-300"
+        >
+          <option value="all">All Status</option>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
       </div>
 
-      {/* Students List */}
+      {/* Student list */}
       <div className="rounded-md border">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
+              <th scope="col" className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <input
+                  type="checkbox"
+                  className="rounded border-gray-300 text-green-600 focus:ring-green-500"
+                  checked={selectedStudents.length === students.length}
+                  onChange={handleSelectAll}
+                />
+              </th>
               <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Name
               </th>
               <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Email
+              </th>
+              <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Student ID
-              </th>
-              <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Classes
-              </th>
-              <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Attendance
               </th>
               <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Status
@@ -297,26 +448,33 @@ export function ManageStudents() {
               </tr>
             ) : (
               filteredStudents.map((student) => (
-                <tr key={student.id}>
+                <tr key={student.id} className={loading ? 'opacity-50' : ''}>
+                  <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      className="rounded border-gray-300 text-green-600 focus:ring-green-500"
+                      checked={selectedStudents.includes(student.id)}
+                      onChange={(e) => handleSelectStudent(student.id, e.target.checked)}
+                    />
+                  </td>
                   <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
                       <div className="h-10 w-10 flex-shrink-0">
-                        <StudentAvatar name={student.name} />
+                        <StudentAvatar name={student.full_name} />
                       </div>
                       <div className="ml-4">
-                        <div className="text-sm font-medium text-gray-900">{student.name}</div>
+                        <div className="text-sm font-medium text-gray-900">{student.full_name}</div>
                         <div className="text-sm text-gray-500">{student.email}</div>
                       </div>
                     </div>
                   </td>
                   <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{student.studentId}</div>
+                    <div className="text-sm text-gray-900">{student.email}</div>
                   </td>
                   <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{student.classes}</div>
-                  </td>
-                  <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{student.attendance}%</div>
+                    <div className="text-sm text-gray-500">
+                      {student.student_id || 'N/A'}
+                    </div>
                   </td>
                   <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
                     <button
@@ -337,24 +495,25 @@ export function ManageStudents() {
                     </button>
                   </td>
                   <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-500">{student.lastActive}</div>
+                    <div className="text-sm text-gray-500">{student.updated_at}</div>
                   </td>
                   <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div className="flex justify-end space-x-2">
-                      <Button 
-                        variant="ghost" 
+                      <Button
+                        variant="ghost"
                         size="sm"
                         onClick={() => handleEdit(student)}
                         disabled={loading}
+                        className="text-purple-600 hover:text-purple-900"
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="text-red-600"
                         onClick={() => handleDelete(student.id)}
                         disabled={loading}
+                        className="text-red-600 hover:text-red-900"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -367,15 +526,51 @@ export function ManageStudents() {
         </table>
       </div>
 
+      {/* Add/Edit Student Modal */}
       {isAddingStudent && (
-        <AddUserForm
-          role="student"
-          onClose={() => {
-            setIsAddingStudent(false);
-            setEditingStudent(null);
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg max-w-md w-full">
+            <AddUserForm
+              role="student"
+              onClose={() => {
+                setIsAddingStudent(false);
+                setEditingStudent(null);
+              }}
+              onSuccess={() => {
+                setIsAddingStudent(false);
+                setEditingStudent(null);
+                fetchStudents();
+              }}
+              editingStudent={editingStudent}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Upload Modal */}
+      {isBulkUploading && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg max-w-md w-full">
+            <BulkStudentUpload
+              onClose={() => setIsBulkUploading(false)}
+              onSuccess={() => {
+                setIsBulkUploading(false);
+                fetchStudents();
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Assign Class Modal */}
+      {isAssigningClass && (
+        <AssignClassModal
+          studentIds={selectedStudents}
+          onClose={() => setIsAssigningClass(false)}
+          onSuccess={() => {
+            setIsAssigningClass(false);
+            fetchStudents();
           }}
-          onSuccess={fetchStudents}
-          editingStudent={editingStudent}
         />
       )}
     </div>

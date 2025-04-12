@@ -495,28 +495,70 @@ export function Reports() {
 
   const fetchReports = async () => {
     try {
-      const { data, error } = await supabase
-        .from('attendance_records')
+      // First, get all class sessions with their enrolled students
+      const { data: sessions, error: sessionError } = await supabase
+        .from('class_sessions')
         .select(`
           id,
-          student_id,
-          student_name,
-          school_student_id,
-          marked_at,
-          class_session:class_sessions!inner (
-            start_time,
-            class:classes (
-              name,
-              course_code
+          start_time,
+          class:classes (
+            id,
+            name,
+            course_code,
+            class_enrollments (
+              student_id,
+              profiles (
+                full_name,
+                school_student_id
+              )
             )
+          ),
+          attendance_records (
+            id,
+            student_id,
+            marked_at
           )
         `)
-        .order('marked_at', { ascending: false });
+        .eq('lecturer_id', authState.user?.id)
+        .order('start_time', { ascending: false });
 
-      if (error) throw error;
-      setReports(data || []);
+      if (sessionError) throw sessionError;
+
+      // Transform the data to include all enrolled students with their attendance status
+      const allReports = sessions?.flatMap(session => {
+        const enrolledStudents = session.class.class_enrollments;
+        
+        return enrolledStudents.map(enrollment => {
+          const studentProfile = enrollment.profiles;
+          const attendanceRecord = session.attendance_records.find(
+            record => record.student_id === enrollment.student_id
+          );
+
+          return {
+            id: attendanceRecord?.id || `no-attendance-${session.id}-${enrollment.student_id}`,
+            student_id: enrollment.student_id,
+            student_name: studentProfile.full_name,
+            school_student_id: studentProfile.school_student_id,
+            marked_at: attendanceRecord?.marked_at || null,
+            class_session: {
+              start_time: session.start_time,
+              class: {
+                name: session.class.name,
+                course_code: session.class.course_code
+              }
+            }
+          };
+        });
+      }) || [];
+
+      setReports(allReports);
     } catch (error) {
       console.error('Error fetching reports:', error);
+      toast({
+        title: "Error fetching attendance reports",
+        description: "Please try again later",
+        variant: "destructive"
+      });
     }
   };
 
@@ -536,13 +578,17 @@ export function Reports() {
       // Create CSV rows
       const rows = reports.map(report => {
         const sessionDate = new Date(report.class_session.start_time);
-        const markedTime = new Date(report.marked_at);
-        const timeDiff = markedTime.getTime() - sessionDate.getTime();
-        const status = timeDiff <= 15 * 60 * 1000 ? 'Present' : 'Late';
+        const status = report.marked_at
+          ? (() => {
+              const markedTime = new Date(report.marked_at);
+              const timeDiff = markedTime.getTime() - sessionDate.getTime();
+              return timeDiff <= 15 * 60 * 1000 ? 'Present' : 'Late';
+            })()
+          : 'Absent';
 
         return [
           format(sessionDate, 'MM/dd/yyyy'),
-          format(markedTime, 'hh:mm a'),
+          format(sessionDate, 'hh:mm a'),
           report.class_session.class.name,
           report.class_session.class.course_code,
           report.student_name,

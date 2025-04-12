@@ -3,9 +3,10 @@ import QRCode from 'qrcode.react';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth-context';
-import { Clock, Users, CheckCircle } from 'lucide-react';
+import { Clock, Users, CheckCircle, Download } from 'lucide-react';
 import { format } from 'date-fns';
 import { useSystemSettings } from '@/hooks/use-system-settings';
+import { useToast } from '@/components/ui/use-toast';
 
 interface QRGeneratorProps {
   classId: string;
@@ -22,6 +23,7 @@ export function QRGenerator({ classId }: QRGeneratorProps) {
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const { authState } = useAuth();
   const { settings, loading: settingsLoading } = useSystemSettings();
+  const { toast } = useToast();
 
   const generateSession = async () => {
     try {
@@ -163,6 +165,152 @@ export function QRGenerator({ classId }: QRGeneratorProps) {
     }
   };
 
+  const exportSessionAttendance = async () => {
+    if (!sessionId) {
+      console.error('No active session');
+      toast({
+        title: "Export Failed",
+        description: "No active session to export",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    console.log('Starting export for session:', sessionId);
+    try {
+      // First get all students enrolled in the class
+      console.log('Fetching enrolled students for class:', classId);
+      const { data: enrollments, error: enrollmentError } = await supabase
+        .from('class_enrollments')
+        .select('student_id')
+        .eq('class_id', classId);
+
+      if (enrollmentError) {
+        console.error('Enrollment error:', enrollmentError);
+        throw enrollmentError;
+      }
+
+      // Then get their profile information
+      const studentIds = enrollments?.map(e => e.student_id) || [];
+      console.log('Found enrolled students:', studentIds.length);
+
+      const { data: studentProfiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', studentIds);
+
+      if (profilesError) {
+        console.error('Profiles error:', profilesError);
+        throw profilesError;
+      }
+
+      // Get attendance records for this session
+      console.log('Fetching attendance records for session:', sessionId);
+      const { data: attendanceRecords, error: attendanceError } = await supabase
+        .from('attendance_records')
+        .select('*')
+        .eq('session_id', sessionId);
+
+      if (attendanceError) {
+        console.error('Attendance error:', attendanceError);
+        throw attendanceError;
+      }
+
+      console.log('Found attendance records:', attendanceRecords?.length);
+
+      // Get session details
+      console.log('Fetching session details');
+      const { data: sessionData, error: sessionError } = await supabase
+        .from('class_sessions')
+        .select('*, classes(name, course_code)')
+        .eq('id', sessionId)
+        .single();
+
+      if (sessionError) {
+        console.error('Session error:', sessionError);
+        throw sessionError;
+      }
+
+      console.log('Session data:', sessionData);
+
+      if (!studentProfiles || !sessionData || !sessionData.classes) {
+        throw new Error('Missing required data for export');
+      }
+
+      // Create CSV data
+      const headers = [
+        'Date',
+        'Time',
+        'Class',
+        'Course Code',
+        'Student Name',
+        'Status',
+        'Marked Time'
+      ];
+
+      const sessionDate = new Date(sessionData.start_time);
+      const rows = studentProfiles.map(student => {
+        const attendance = attendanceRecords?.find(
+          record => record.student_id === student.id
+        );
+        
+        const status = attendance
+          ? (() => {
+              const markedTime = new Date(attendance.marked_at);
+              const timeDiff = markedTime.getTime() - sessionDate.getTime();
+              return timeDiff <= 15 * 60 * 1000 ? 'Present' : 'Late';
+            })()
+          : 'Absent';
+
+        return [
+          format(sessionDate, 'MM/dd/yyyy'),
+          format(sessionDate, 'hh:mm a'),
+          sessionData.classes.name,
+          sessionData.classes.course_code,
+          student.full_name,
+          status,
+          attendance ? format(new Date(attendance.marked_at), 'hh:mm:ss a') : '-'
+        ];
+      });
+
+      console.log('Generated rows:', rows.length);
+
+      // Create CSV content
+      const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => `"${cell || ''}"`).join(','))
+      ].join('\n');
+
+      console.log('CSV content generated, creating download...');
+
+      // Download file
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      const fileName = `attendance_${sessionData.classes.course_code}_${format(sessionDate, 'MM-dd-yyyy_HH-mm')}.csv`;
+      console.log('Downloading file:', fileName);
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      toast({
+        title: "Attendance Report Downloaded",
+        description: "The attendance report has been exported successfully.",
+        variant: "success"
+      });
+    } catch (error) {
+      console.error('Error exporting attendance:', error);
+      toast({
+        title: "Export Failed",
+        description: error instanceof Error ? error.message : "There was an error exporting the attendance report.",
+        variant: "destructive"
+      });
+    }
+  };
+
   // Separate useEffect for timer countdown
   useEffect(() => {
     let timer: number;
@@ -256,9 +404,20 @@ export function QRGenerator({ classId }: QRGeneratorProps) {
               <Clock className="h-5 w-5 text-blue-500" />
               <span>Time remaining: {formatTime(timeLeft)}</span>
             </div>
-            <div className="flex items-center space-x-2">
-              <Users className="h-5 w-5 text-green-500" />
-              <span>{attendees.length} present</span>
+            <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-2">
+                <Users className="h-5 w-5 text-green-500" />
+                <span>{attendees.length} present</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex items-center space-x-2 text-green-600 border-green-200 hover:bg-green-50"
+                onClick={exportSessionAttendance}
+              >
+                <Download className="h-4 w-4" />
+                <span>Download</span>
+              </Button>
             </div>
           </div>
 

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Lock, Mail, ArrowLeft, QrCode, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '@/contexts/auth-context';
+import { AuthContextType } from '@/lib/types';
 
 export function LoginForm() {
   const [email, setEmail] = useState('');
@@ -11,12 +12,27 @@ export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
   const { role } = useParams<{ role: 'student' | 'lecturer' | 'admin' }>();
-  const { login, authState } = useAuth();
-  const { loading, error } = authState;
+  const { login } = useAuth() as AuthContextType;
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await login(email, password);
+    setError(null);
+    setLoading(true);
+
+    try {
+      await login(email, password);
+      // Store password temporarily for admin/lecturer session restoration
+      if (role === 'admin' || role === 'lecturer') {
+        localStorage.setItem('temp_admin_pass', password);
+      }
+      navigate(`/${role}/dashboard`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sign in');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const roleTitle = {
@@ -93,16 +109,20 @@ export function LoginForm() {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"
-                  disabled={loading}
+                  className="absolute right-3 top-3"
                 >
                   {showPassword ? (
-                    <Eye className="h-5 w-5" />
+                    <EyeOff className="h-5 w-5 text-gray-400" />
                   ) : (
-                    <EyeOff className="h-5 w-5" />
+                    <Eye className="h-5 w-5 text-gray-400" />
                   )}
                 </button>
               </div>
+              {role === 'student' && (
+                <p className="text-sm text-gray-600">
+                  First time login? Use your temporary password format: Ug + Your Student ID
+                </p>
+              )}
             </div>
 
             {error && (
@@ -119,14 +139,18 @@ export function LoginForm() {
               </Button>
 
               <p className="text-center text-sm text-gray-600">
-                Don't have an account?{' '}
-                <button
-                  type="button"
-                  onClick={() => navigate(`/signup/${role}`)}
-                  className="text-blue-600 hover:underline"
-                >
-                  Sign up
-                </button>
+                {role !== 'student' && (
+                  <>
+                    Don't have an account?{' '}
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/signup/${role}`)}
+                      className="text-blue-600 hover:underline"
+                    >
+                      Sign up
+                    </button>
+                  </>
+                )}
               </p>
             </div>
           </form>

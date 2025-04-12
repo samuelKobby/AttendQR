@@ -7,21 +7,12 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables');
 }
 
+// Create a single supabase client for interacting with your database
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    persistSession: true,
     autoRefreshToken: true,
+    persistSession: true,
     detectSessionInUrl: true,
-  },
-  global: {
-    headers: {
-      'x-application-name': 'attendance-system',
-    },
-  },
-  realtime: {
-    params: {
-      eventsPerSecond: 10,
-    },
   },
   db: {
     schema: 'public',

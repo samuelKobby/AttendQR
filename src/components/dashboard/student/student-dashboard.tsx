@@ -16,6 +16,7 @@ import {
   QrCode,
   BookOpen,
   AlertCircle,
+  KeyRound,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth-context';
@@ -43,6 +44,7 @@ import {
   AreaChart,
   Area,
 } from 'recharts';
+import { ChangePasswordForm } from '@/components/forms/change-password-form';
 
 interface AttendanceRecord {
   id: string;
@@ -110,6 +112,7 @@ export function StudentDashboard() {
     weeklyProgress: [],
     overallStats: []
   });
+  const [showChangePassword, setShowChangePassword] = useState(false);
   const { authState } = useAuth();
   const email = authState.user?.email || '';
 
@@ -128,6 +131,7 @@ export function StudentDashboard() {
         .select(`
           id,
           marked_at,
+          status,
           class_sessions!inner (
             start_time,
             classes (
@@ -135,23 +139,18 @@ export function StudentDashboard() {
             )
           )
         `)
-        .eq('student_id', authState.user?.id)
+        .eq('user_id', authState.user?.id)
         .order('marked_at', { ascending: false });
 
       if (data) {
         setAttendanceHistory(
-          data.map((record) => {
-            const markedTime = record.marked_at ? new Date(record.marked_at) : null;
-            const status = markedTime ? 'present' : 'absent';
-
-            return {
-              id: record.id,
-              date: record.class_sessions.start_time,
-              class_name: record.class_sessions.classes.name,
-              status,
-              marked_at: record.marked_at,
-            };
-          })
+          data.map((record) => ({
+            id: record.id,
+            date: record.class_sessions.start_time,
+            class_name: record.class_sessions.classes.name,
+            status: record.status || 'absent',
+            marked_at: record.marked_at,
+          }))
         );
       }
     } catch (error) {
@@ -161,8 +160,8 @@ export function StudentDashboard() {
 
   const fetchClasses = async () => {
     try {
-      const { data } = await supabase
-        .from('class_enrollments')
+      const { data: sessions } = await supabase
+        .from('class_sessions')
         .select(`
           classes (
             id,
@@ -170,48 +169,56 @@ export function StudentDashboard() {
             course_code,
             schedule,
             location,
-            class_sessions (
-              start_time,
-              attendance_records (
-                id,
-                student_id
-              )
-            )
+            lecturer_id
+          ),
+          attendance_records!inner (
+            status
           )
         `)
-        .eq('student_id', authState.user?.id);
+        .eq('attendance_records.user_id', authState.user?.id);
 
-      if (data) {
-        const classesWithStats = data.map((enrollment) => {
-          const cls = enrollment.classes;
-          const sessions = cls.class_sessions || [];
-          const totalSessions = sessions.length;
-          const attendedSessions = sessions.filter((session) =>
-            session.attendance_records.some((record) => record.student_id === authState.user?.id)
-          ).length;
+      if (sessions) {
+        // Group sessions by class and calculate attendance rate
+        const classMap = new Map<string, {
+          id: string;
+          name: string;
+          course_code: string;
+          schedule: string;
+          location: string;
+          attendance_rate: number;
+          total_sessions: number;
+          present_sessions: number;
+        }>();
 
-          const nextSession = sessions
-            .map((s) => s.start_time)
-            .filter((time) => new Date(time) > new Date())
-            .sort()[0];
+        sessions.forEach((session) => {
+          const cls = session.classes;
+          if (!cls) return;
 
-          return {
+          const existing = classMap.get(cls.id) || {
             id: cls.id,
             name: cls.name,
             course_code: cls.course_code,
-            schedule: cls.schedule,
-            location: cls.location,
-            attendance_rate: totalSessions > 0 ? (attendedSessions / totalSessions) * 100 : 0,
-            next_session: nextSession,
+            schedule: cls.schedule || 'Not specified',
+            location: cls.location || 'Not specified',
+            attendance_rate: 0,
+            total_sessions: 0,
+            present_sessions: 0,
           };
+
+          existing.total_sessions++;
+          if (session.attendance_records[0]?.status === 'present') {
+            existing.present_sessions++;
+          }
+
+          classMap.set(cls.id, existing);
         });
 
-        setClasses(classesWithStats);
-        setUpcomingClasses(
-          classesWithStats
-            .filter((cls) => cls.next_session)
-            .sort((a, b) => new Date(a.next_session!).getTime() - new Date(b.next_session!).getTime())
-        );
+        const classes = Array.from(classMap.values()).map((cls) => ({
+          ...cls,
+          attendance_rate: (cls.present_sessions / cls.total_sessions) * 100,
+        }));
+
+        setClasses(classes);
       }
     } catch (error) {
       console.error('Error fetching classes:', error);
@@ -227,7 +234,7 @@ export function StudentDashboard() {
           start_time,
           attendance_records!left (
             id,
-            student_id
+            user_id
           )
         `)
         .lte('start_time', new Date().toISOString());
@@ -235,7 +242,7 @@ export function StudentDashboard() {
       if (sessions) {
         const totalClasses = sessions.length;
         const presentCount = sessions.filter((session) =>
-          session.attendance_records.some((record) => record.student_id === authState.user?.id)
+          session.attendance_records.some((record) => record.user_id === authState.user?.id)
         ).length;
         const absentCount = totalClasses - presentCount;
         const averageAttendance = totalClasses > 0 ? (presentCount / totalClasses) * 100 : 0;
@@ -300,7 +307,7 @@ export function StudentDashboard() {
             )
           )
         `)
-        .eq('student_id', authState.user?.id)
+        .eq('user_id', authState.user?.id)
         .gte('marked_at', thirtyDaysAgo.toISOString())
         .order('marked_at', { ascending: true });
 
@@ -451,7 +458,7 @@ export function StudentDashboard() {
             )
           )
         `)
-        .eq('student_id', authState.user?.id)
+        .eq('user_id', authState.user?.id)
         .order('marked_at', { ascending: false });
 
       if (attendanceError) throw attendanceError;
@@ -557,26 +564,42 @@ export function StudentDashboard() {
             Welcome back, {authState.user?.name}
           </p>
         </div>
-        <div className="flex items-center gap-4">
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-xs sm:text-sm relative hover:bg-blue-500/15 hover:text-blue-600 hover:border-blue-500/25"
-            onClick={() => {
-              setShowNotifications(true);
-              markNotificationsAsRead();
-            }}
-          >
-            <Bell className="h-4 w-4" />
-            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
-              {notifications.filter((n) => !n.read).length}
-            </span>
-          </Button>
-          <ProfileAvatar 
-            email={email} 
-            role="student" 
-            onClick={() => setShowSettings(true)}
-          />
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center space-x-4">
+            <ProfileAvatar 
+              email={email} 
+              role="student"
+              size="lg"
+            />
+            <div>
+              <h1 className="text-2xl font-bold">{authState.profile?.full_name}</h1>
+              <p className="text-gray-600">{email}</p>
+            </div>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowChangePassword(true)}
+              className="flex items-center gap-2"
+            >
+              <KeyRound className="h-4 w-4" />
+              Change Password
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowNotifications(true)}
+              className="relative"
+            >
+              <Bell className="h-5 w-5" />
+              {notifications.filter(n => !n.read).length > 0 && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
+                  {notifications.filter(n => !n.read).length}
+                </span>
+              )}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -1127,6 +1150,14 @@ export function StudentDashboard() {
                 <Button onClick={() => setShowFilter(false)}>Apply</Button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showChangePassword && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg max-w-md w-full mx-4">
+            <ChangePasswordForm onClose={() => setShowChangePassword(false)} />
           </div>
         </div>
       )}

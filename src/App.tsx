@@ -21,6 +21,7 @@ import { ErrorBoundary } from './components/error-boundary';
 import { StudentAttendance } from './components/dashboard/student/student-attendance';
 import { AttendanceHistory } from './components/dashboard/student/attendance-history';
 import { StudentNotifications } from './components/dashboard/student/student-notifications';
+import { ManageClassStudents } from './pages/lecturer/ManageClassStudents';
 import { Toaster } from 'sonner';
 
 function AppContent() {
@@ -66,6 +67,7 @@ function AppContent() {
             <Routes>
               <Route path="/lecturer" element={<LecturerDashboard />} />
               <Route path="/lecturer/classes" element={<MyClasses />} />
+              <Route path="/lecturer/classes/:classId/students" element={<ManageClassStudents />} />
               <Route path="/lecturer/attendance" element={<TakeAttendance />} />
               <Route path="/lecturer/reports" element={<LecturerReports />} />
               <Route path="/" element={<Navigate to="/lecturer" />} />
@@ -98,8 +100,8 @@ export function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
+        <Toaster position="top-center" richColors />
         <AppContent />
-        <Toaster />
       </AuthProvider>
     </ErrorBoundary>
   );

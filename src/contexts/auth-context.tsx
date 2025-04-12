@@ -55,7 +55,8 @@ async function retry<T>(
   delay = RETRY_DELAY
 ): Promise<T> {
   try {
-    return await fn();
+    const result = await fn();
+    return result;
   } catch (error) {
     if (retries <= 0) throw error;
     await new Promise(resolve => setTimeout(resolve, delay));
@@ -84,49 +85,54 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const login = async (email: string, password: string) => {
-    try {
-      dispatch({ type: 'LOGIN_START' });
+    dispatch({ type: 'LOGIN_START' });
 
-      // First attempt to sign in
-      const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({
+    try {
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
-      if (signInError) {
-        throw signInError;
+      if (authError) {
+        console.error('Login error:', authError);
+        throw authError;
       }
 
-      if (!authData.user) {
+      if (!authData?.user) {
         throw new Error('No user data returned from login');
       }
 
-      // Then fetch the user's profile
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', authData.user.id)
-        .single();
+      // Get user profile data
+      const { data: profile, error: profileError } = await retry(() =>
+        supabase
+          .from('profiles')
+          .select('id, email, full_name, role, student_id')
+          .eq('id', authData.user.id)
+          .single()
+      );
 
       if (profileError) {
         console.error('Profile fetch error:', profileError);
-        throw new Error('Failed to fetch user profile');
+        throw profileError;
       }
 
       if (!profile) {
-        console.error('No profile found for user:', authData.user.id);
         throw new Error('User profile not found');
       }
 
+      // Update state with user data
       const user: User = {
-        id: authData.user.id,
-        email: authData.user.email!,
+        id: profile.id,
+        email: profile.email,
         name: profile.full_name,
-        role: profile.role,
+        role: profile.role as 'admin' | 'lecturer' | 'student',
         student_id: profile.student_id
       };
 
-      dispatch({ type: 'LOGIN_SUCCESS', payload: user });
+      dispatch({
+        type: 'LOGIN_SUCCESS',
+        payload: user,
+      });
 
       // Show success toast
       toast({
@@ -186,6 +192,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const logout = async () => {
     try {
       await supabase.auth.signOut();
+      // Clear stored admin password
+      localStorage.removeItem('temp_admin_pass');
       dispatch({ type: 'LOGOUT' });
       navigate('/');
       toast({
@@ -217,22 +225,28 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         if (sessionError) throw sessionError;
         
         if (session) {
-          const { data: profileData, error: profileError } = await retry(() =>
-            supabase
-              .from('profiles')
-              .select('role, full_name, student_id')
-              .eq('id', session.user.id)
-              .single()
-          );
+          const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('role, full_name, student_id')
+            .eq('id', session.user.id)
+            .single();
 
-          if (profileError) throw profileError;
+          if (profileError) {
+            console.error('Error checking session:', profileError);
+            return;
+          }
+
+          if (!profile) {
+            console.error('No profile found for user:', session.user.id);
+            return;
+          }
 
           const user: User = {
             id: session.user.id,
             email: session.user.email!,
-            name: profileData.full_name || session.user.email!.split('@')[0],
-            role: profileData.role as 'admin' | 'lecturer' | 'student',
-            student_id: profileData.student_id
+            name: profile.full_name || session.user.email!.split('@')[0],
+            role: profile.role as 'admin' | 'lecturer' | 'student',
+            student_id: profile.student_id
           };
 
           localStorage.setItem('auth_user', JSON.stringify(user));

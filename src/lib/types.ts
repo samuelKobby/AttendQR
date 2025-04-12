@@ -3,7 +3,7 @@ export type User = {
   email: string;
   name: string;
   role: 'admin' | 'lecturer' | 'student';
-  student_id?: string;  // Updated to match metadata field name
+  student_id?: string;
 };
 
 export type AuthState = {
